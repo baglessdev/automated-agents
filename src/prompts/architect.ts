@@ -1,6 +1,22 @@
 // Architect prompt. Produces an `approach.md` as a markdown comment body
 // that downstream coder + reviewer consume as the task contract.
 
+// Caveman-style output discipline. Inspired by
+// github.com/juliusbrussee/caveman. Cuts output tokens ~50-65% without
+// sacrificing technical correctness. Prepended to every role's system
+// prompt when config.terseOutputs is true.
+export const TERSE_DISCIPLINE = `
+## Output discipline
+
+- Terse. Technical substance exact.
+- Drop articles (a, an, the) and filler words where meaning survives.
+- Use fragments over sentences when unambiguous.
+- No preambles ("Here is...", "I will now..."), no postambles ("Hope this helps").
+- No emojis. No decorative markdown.
+- Bullet lists over paragraphs when structure allows.
+- Keep the required section headings and their order exactly as specified.
+`.trim();
+
 export const ARCHITECT_SYSTEM = `
 You are the architect agent in a three-role AI software delivery pipeline:
 

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { getIssue, postIssueComment } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
-import { ARCHITECT_SYSTEM, architectUserPrompt } from '../prompts/architect';
+import { ARCHITECT_SYSTEM, TERSE_DISCIPLINE, architectUserPrompt } from '../prompts/architect';
+import { config } from '../config';
 import type { ArchitectPayload, Job } from '../types';
 
 function readOptional(path: string): string {
@@ -179,12 +180,16 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
     });
 
     // 5. Run Claude with Read/Grep/Bash tools, cwd pointed at the clone
+    const systemPrompt = config.terseOutputs
+      ? `${TERSE_DISCIPLINE}\n\n${ARCHITECT_SYSTEM}`
+      : ARCHITECT_SYSTEM;
+
     const result = await runClaude({
-      systemPrompt: ARCHITECT_SYSTEM,
+      systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Grep', 'Bash'],
-      model: 'claude-sonnet-4-5',
+      model: config.architectModel,
       maxTurns: 30,
     });
 

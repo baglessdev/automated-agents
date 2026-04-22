@@ -34,7 +34,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       systemPrompt: opts.systemPrompt,
       cwd: opts.cwd,
       allowedTools: opts.allowedTools ?? ['Read', 'Grep', 'Bash'],
-      model: opts.model ?? 'claude-sonnet-4-5',
+      model: opts.model ?? 'claude-haiku-4-5',
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
     },

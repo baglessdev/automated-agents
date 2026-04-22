@@ -35,4 +35,15 @@ export const config = {
 
   // How often the worker polls the queue when idle (ms).
   pollIntervalMs: Number(optional('POLL_INTERVAL_MS', '2000')),
+
+  // Per-role model overrides. Defaults to haiku-4-5 for POC cost.
+  // Override at runtime with ARCHITECT_MODEL, CODER_MODEL, REVIEWER_MODEL.
+  architectModel: optional('ARCHITECT_MODEL', 'claude-haiku-4-5'),
+  coderModel: optional('CODER_MODEL', 'claude-haiku-4-5'),
+  reviewerModel: optional('REVIEWER_MODEL', 'claude-haiku-4-5'),
+
+  // Terseness toggle. When true, prepends a "caveman-style" output
+  // discipline block to every role's system prompt to cut output tokens
+  // by ~50-65% without losing substance. Default on for POC.
+  terseOutputs: optional('TERSE_OUTPUTS', '1') === '1',
 };
