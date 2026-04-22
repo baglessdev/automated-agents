@@ -134,21 +134,63 @@ export async function getPullDiff(repoFull: string, number: number): Promise<str
   return resp.data as unknown as string;
 }
 
+export interface LineComment {
+  path: string;
+  line: number;
+  side?: 'LEFT' | 'RIGHT';
+  body: string;
+}
+
+// Post a PR review with optional inline comments. `event` is gated to
+// COMMENT or REQUEST_CHANGES — the agent never APPROVES (human-only).
+// On GitHub validation failure (e.g. line refs outside the diff), retries
+// once without the comments so the summary still lands.
 export async function postPullReview(args: {
   repoFull: string;
   prNumber: number;
   commitId: string;
   body: string;
-}): Promise<string> {
+  event: 'COMMENT' | 'REQUEST_CHANGES';
+  comments?: LineComment[];
+}): Promise<{ url: string; inlineCommentsDropped: boolean }> {
   const { owner, repo } = parseRepo(args.repoFull);
-  const { data } = await octokit.pulls.createReview({
-    owner,
-    repo,
-    pull_number: args.prNumber,
-    commit_id: args.commitId,
-    body: args.body,
-    // Hard architectural gate: reviewer agent is advisory. Humans approve.
-    event: 'COMMENT',
-  });
-  return data.html_url;
+  const comments =
+    args.comments?.map((c) => ({
+      path: c.path,
+      line: c.line,
+      side: c.side ?? 'RIGHT',
+      body: c.body,
+    })) ?? [];
+
+  try {
+    const { data } = await octokit.pulls.createReview({
+      owner,
+      repo,
+      pull_number: args.prNumber,
+      commit_id: args.commitId,
+      body: args.body,
+      event: args.event,
+      comments,
+    });
+    return { url: data.html_url, inlineCommentsDropped: false };
+  } catch (err) {
+    // Most common failure: a line number doesn't match a position in the
+    // diff. Retry with just the summary body so we don't lose the review.
+    if (comments.length > 0) {
+      const { data } = await octokit.pulls.createReview({
+        owner,
+        repo,
+        pull_number: args.prNumber,
+        commit_id: args.commitId,
+        body:
+          args.body +
+          `\n\n---\n_Note: ${comments.length} inline comment(s) were ` +
+          `dropped because GitHub rejected their line references. ` +
+          `See the Bugs / correctness section above for the content._`,
+        event: args.event,
+      });
+      return { url: data.html_url, inlineCommentsDropped: true };
+    }
+    throw err;
+  }
 }

@@ -5,6 +5,7 @@ import {
   getPull,
   getPullDiff,
   postPullReview,
+  type LineComment,
 } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
@@ -76,13 +77,63 @@ function buildTree(repoDir: string): string {
     .join('\n');
 }
 
-// Pull the approach body out of the coder's PR embed (between
-// <!-- agent-approach-embed --> and <!-- /agent-approach-embed -->).
 function extractEmbeddedApproach(prBody: string): string {
   const m = prBody.match(
     /<!--\s*agent-approach-embed\s*-->\s*\n([\s\S]*?)\n\s*<!--\s*\/agent-approach-embed\s*-->/,
   );
   return m ? m[1].trim() : '';
+}
+
+// Parse the <!-- review-json --> block embedded in Claude's output.
+// Returns { markdownBody (without json block), verdict, lineComments }.
+function parseReviewOutput(raw: string): {
+  markdownBody: string;
+  verdict: 'lgtm' | 'changes-required';
+  lineComments: LineComment[];
+} {
+  const jsonBlockRe =
+    /<!--\s*review-json\s*-->\s*\n```json\s*\n([\s\S]*?)\n```\s*\n<!--\s*\/review-json\s*-->/;
+  const m = raw.match(jsonBlockRe);
+
+  // Strip the JSON block (and markers) from the body regardless of parse outcome.
+  const markdownBody = raw.replace(jsonBlockRe, '').trim();
+
+  if (!m) {
+    // No JSON block — fall back to heuristic: look for "Changes required" in the
+    // markdown. Default to changes-required when uncertain (safer gate).
+    const verdict: 'lgtm' | 'changes-required' = /\*\*Changes required\*\*|changes required/i.test(
+      raw,
+    )
+      ? 'changes-required'
+      : 'lgtm';
+    return { markdownBody, verdict, lineComments: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(m[1]) as {
+      verdict?: string;
+      line_comments?: Array<{
+        path?: string;
+        line?: number;
+        side?: string;
+        body?: string;
+      }>;
+    };
+    const verdict =
+      parsed.verdict === 'changes-required' ? 'changes-required' : 'lgtm';
+    const lineComments = (parsed.line_comments ?? [])
+      .filter((c) => c.path && typeof c.line === 'number' && c.body)
+      .map<LineComment>((c) => ({
+        path: c.path as string,
+        line: c.line as number,
+        side: c.side === 'LEFT' ? 'LEFT' : 'RIGHT',
+        body: c.body as string,
+      }));
+    return { markdownBody, verdict, lineComments };
+  } catch {
+    // Invalid JSON — fall back to changes-required (safer default).
+    return { markdownBody, verdict: 'changes-required', lineComments: [] };
+  }
 }
 
 export async function runReviewer(job: Job & { payload: ReviewerPayload }): Promise<void> {
@@ -104,10 +155,8 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
   const diff = await getPullDiff(repo, prNumber);
   const approachBody = extractEmbeddedApproach(pull.body);
 
-  // Clone at PR head SHA for file reads + tree.
   const ws = newWorkspace(repo, pull.headRef);
   try {
-    // Pin to exact head SHA; head ref might move if coder force-pushed.
     execFileSync('git', ['checkout', '-q', pull.headSha], {
       cwd: ws.repoDir,
       stdio: ['ignore', 'inherit', 'inherit'],
@@ -135,7 +184,6 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
-      // Reviewer does not write anything — no Edit/Write/Bash.
       allowedTools: ['Read', 'Grep'],
       model: config.reviewerModel,
       maxTurns: 20,
@@ -155,18 +203,24 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       }),
     );
 
+    const { markdownBody, verdict, lineComments } = parseReviewOutput(result.text);
+
     const body =
-      result.text.trim() +
+      markdownBody +
       `\n\n---\n` +
       `_Posted by reviewer agent. Run: \`${runId}\` · ` +
+      `Verdict: \`${verdict}\` · ` +
+      `Inline: ${lineComments.length} · ` +
       `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
       `Turns: ${result.turns ?? '?'}._`;
 
-    const reviewUrl = await postPullReview({
+    const { url, inlineCommentsDropped } = await postPullReview({
       repoFull: repo,
       prNumber,
       commitId: pull.headSha,
       body,
+      event: verdict === 'changes-required' ? 'REQUEST_CHANGES' : 'COMMENT',
+      comments: lineComments,
     });
 
     console.log(
@@ -175,7 +229,10 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
         run: job.id,
         role: 'reviewer',
         event: 'review_posted',
-        url: reviewUrl,
+        url,
+        verdict,
+        inlineComments: lineComments.length,
+        inlineCommentsDropped,
       }),
     );
   } finally {
