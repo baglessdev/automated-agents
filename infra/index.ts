@@ -120,6 +120,11 @@ echo "[bootstrap] node 20"
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y -qq nodejs
 
+echo "[bootstrap] claude code CLI"
+# @anthropic-ai/claude-agent-sdk spawns the 'claude' binary as a subprocess,
+# so the CLI must be present globally in addition to the npm-installed SDK.
+npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+
 echo "[bootstrap] caddy"
 curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \\
   | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
