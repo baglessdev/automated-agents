@@ -155,6 +155,104 @@ export interface LineComment {
   body: string;
 }
 
+export interface PullReview {
+  id: number;
+  userLogin: string;
+  body: string;
+  state: string;
+  submittedAt: string | null;
+  htmlUrl: string;
+}
+
+export interface PullReviewComment {
+  id: number;
+  pullRequestReviewId: number | null;
+  userLogin: string;
+  path: string;
+  line: number | null;
+  side: 'LEFT' | 'RIGHT' | null;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+export interface PullCommit {
+  sha: string;
+  message: string;
+  authorLogin: string;
+  authorDate: string | null;
+}
+
+// List reviews posted on a PR, oldest first. Used by the iterate flow to
+// find the most recent REQUEST_CHANGES / COMMENT review to address.
+export async function listPullReviews(
+  repoFull: string,
+  number: number,
+): Promise<PullReview[]> {
+  const { owner, repo } = parseRepo(repoFull);
+  const data = await octokit.paginate(octokit.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: number,
+    per_page: 100,
+  });
+  return data.map((r) => ({
+    id: r.id,
+    userLogin: r.user?.login ?? '',
+    body: r.body ?? '',
+    state: r.state ?? '',
+    submittedAt: r.submitted_at ?? null,
+    htmlUrl: r.html_url ?? '',
+  }));
+}
+
+// List inline comments on a PR's diff (all reviews combined). Iteration
+// fetches these and filters to the latest review's batch.
+export async function listPullReviewComments(
+  repoFull: string,
+  number: number,
+): Promise<PullReviewComment[]> {
+  const { owner, repo } = parseRepo(repoFull);
+  const data = await octokit.paginate(octokit.pulls.listReviewComments, {
+    owner,
+    repo,
+    pull_number: number,
+    per_page: 100,
+  });
+  return data.map((c) => ({
+    id: c.id,
+    pullRequestReviewId: c.pull_request_review_id ?? null,
+    userLogin: c.user?.login ?? '',
+    path: c.path,
+    line: c.line ?? c.original_line ?? null,
+    side: (c.side as 'LEFT' | 'RIGHT' | undefined) ?? null,
+    body: c.body ?? '',
+    createdAt: c.created_at,
+    htmlUrl: c.html_url,
+  }));
+}
+
+// List commits on a PR (head branch). Used to count prior coder iterations
+// via the commit-message marker and enforce the iteration cap.
+export async function listPullCommits(
+  repoFull: string,
+  number: number,
+): Promise<PullCommit[]> {
+  const { owner, repo } = parseRepo(repoFull);
+  const data = await octokit.paginate(octokit.pulls.listCommits, {
+    owner,
+    repo,
+    pull_number: number,
+    per_page: 100,
+  });
+  return data.map((c) => ({
+    sha: c.sha,
+    message: c.commit.message ?? '',
+    authorLogin: c.author?.login ?? '',
+    authorDate: c.commit.author?.date ?? null,
+  }));
+}
+
 // Post a PR review with optional inline comments. `event` is gated to
 // COMMENT or REQUEST_CHANGES — the agent never APPROVES (human-only).
 // On GitHub validation failure (e.g. line refs outside the diff), retries

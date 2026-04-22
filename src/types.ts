@@ -1,6 +1,6 @@
 // Shared types across webhook, queue, worker, and roles.
 
-export type JobKind = 'architect' | 'coder' | 'reviewer';
+export type JobKind = 'architect' | 'coder' | 'coder_iterate' | 'reviewer';
 
 export interface ArchitectPayload {
   repo: string;
@@ -14,13 +14,24 @@ export interface CoderPayload {
   issueUrl: string;
 }
 
+export interface IteratePayload {
+  repo: string;
+  prNumber: number;
+  prUrl: string;
+  requestedBy: string;
+}
+
 export interface ReviewerPayload {
   repo: string;
   prNumber: number;
   prUrl: string;
 }
 
-export type JobPayload = ArchitectPayload | CoderPayload | ReviewerPayload;
+export type JobPayload =
+  | ArchitectPayload
+  | CoderPayload
+  | IteratePayload
+  | ReviewerPayload;
 
 export interface Job {
   id: string;

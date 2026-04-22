@@ -46,4 +46,10 @@ export const config = {
   // discipline block to every role's system prompt to cut output tokens
   // by ~50-65% without losing substance. Default on for POC.
   terseOutputs: optional('TERSE_OUTPUTS', '1') === '1',
+
+  // Cap on how many /iterate cycles a single PR can consume. Each coder
+  // push to the same branch counts as one iteration (detected by the
+  // coder-commit marker). Exists to stop infinite feedback loops when
+  // the reviewer keeps finding issues the coder can't fix.
+  maxIterations: Number(optional('ITERATE_MAX', '3')),
 };

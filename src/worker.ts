@@ -5,11 +5,13 @@
 import { SqliteQueue } from './queue/sqlite';
 import { runArchitect } from './roles/architect';
 import { runCoder } from './roles/coder';
+import { runCoderIterate } from './roles/coder-iterate';
 import { runReviewer } from './roles/reviewer';
 import { config } from './config';
 import type {
   ArchitectPayload,
   CoderPayload,
+  IteratePayload,
   Job,
   ReviewerPayload,
 } from './types';
@@ -32,6 +34,9 @@ async function runOne(job: Job): Promise<void> {
         break;
       case 'coder':
         await runCoder(job as Job & { payload: CoderPayload });
+        break;
+      case 'coder_iterate':
+        await runCoderIterate(job as Job & { payload: IteratePayload });
         break;
       case 'reviewer':
         await runReviewer(job as Job & { payload: ReviewerPayload });
