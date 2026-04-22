@@ -133,9 +133,19 @@ curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \\
 apt-get update -qq
 apt-get install -y -qq caddy
 
+echo "[bootstrap] agent user"
+# claude-code refuses to run with --dangerously-skip-permissions under root.
+# Create a dedicated non-root service user.
+id agent >/dev/null 2>&1 || useradd -r -m -d /home/agent -s /bin/bash agent
+
+echo "[bootstrap] state dirs"
+mkdir -p /var/work/automated-agents /var/lib/automated-agents
+chown -R agent:agent /var/work/automated-agents /var/lib/automated-agents
+
 echo "[bootstrap] clone automated-agents"
 mkdir -p /opt/automated-agents
 git clone https://github.com/baglessdev/automated-agents.git /opt/automated-agents
+chown -R agent:agent /opt/automated-agents
 cd /opt/automated-agents
 
 echo "[bootstrap] npm install + build"
@@ -152,6 +162,7 @@ ANTHROPIC_API_KEY=${ak}
 GITHUB_WEBHOOK_SECRET=${ws}
 GITHUB_TOKEN=${gt}
 ENV
+chown agent:agent /etc/automated-agents.env
 
 echo "[bootstrap] systemd unit"
 cat > /etc/systemd/system/automated-agents.service <<'UNIT'
@@ -161,6 +172,8 @@ After=network.target
 
 [Service]
 Type=simple
+User=agent
+Group=agent
 ExecStart=/usr/bin/node /opt/automated-agents/dist/main.js
 WorkingDirectory=/opt/automated-agents
 EnvironmentFile=/etc/automated-agents.env
