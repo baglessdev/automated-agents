@@ -1,0 +1,6 @@
+name: automated-agents
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Single-EC2 webhook host for the automated-agents service

@@ -1,0 +1,17 @@
+{
+  "name": "automated-agents-infra",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@pulumi/aws": "^6.59.0",
+    "@pulumi/pulumi": "^3.137.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.5.0"
+  }
+}
