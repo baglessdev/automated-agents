@@ -125,6 +125,22 @@ echo "[bootstrap] claude code CLI"
 # so the CLI must be present globally in addition to the npm-installed SDK.
 npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
 
+echo "[bootstrap] go + task (needed for coder's verify loop)"
+# Go 1.22 to /usr/local/go, symlinked into /usr/bin for systemd PATH.
+GO_VERSION=1.22.6
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) GO_ARCH=amd64 ;;
+  aarch64|arm64) GO_ARCH=arm64 ;;
+  *) echo "unsupported arch $ARCH"; exit 1 ;;
+esac
+curl -fsSL "https://go.dev/dl/go\${GO_VERSION}.linux-\${GO_ARCH}.tar.gz" | tar -xz -C /usr/local
+ln -sfn /usr/local/go/bin/go /usr/bin/go
+# task runner — installed via go install so it lives in /usr/local/go/bin.
+GOBIN=/usr/local/go/bin /usr/local/go/bin/go install \
+  github.com/go-task/task/v3/cmd/task@latest
+ln -sfn /usr/local/go/bin/task /usr/bin/task
+
 echo "[bootstrap] caddy"
 curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \\
   | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg

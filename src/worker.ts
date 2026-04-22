@@ -4,8 +4,9 @@
 
 import { SqliteQueue } from './queue/sqlite';
 import { runArchitect } from './roles/architect';
+import { runCoder } from './roles/coder';
 import { config } from './config';
-import type { Job } from './types';
+import type { ArchitectPayload, CoderPayload, Job } from './types';
 
 const queue = new SqliteQueue(config.queuePath);
 
@@ -21,7 +22,10 @@ async function runOne(job: Job): Promise<void> {
   try {
     switch (job.kind) {
       case 'architect':
-        await runArchitect(job as Job);
+        await runArchitect(job as Job & { payload: ArchitectPayload });
+        break;
+      case 'coder':
+        await runCoder(job as Job & { payload: CoderPayload });
         break;
       default: {
         const _exhaust: never = job.kind;
@@ -29,9 +33,7 @@ async function runOne(job: Job): Promise<void> {
       }
     }
     queue.markDone(job.id);
-    console.log(
-      JSON.stringify({ level: 'info', run: job.id, event: 'done' }),
-    );
+    console.log(JSON.stringify({ level: 'info', run: job.id, event: 'done' }));
   } catch (err) {
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
     queue.markFailed(job.id, msg);
@@ -49,7 +51,6 @@ export function startWorker(): void {
     const job = queue.claimNext();
     if (job) {
       await runOne(job);
-      // Loop immediately — there may be more work.
       setImmediate(tick);
     } else {
       setTimeout(tick, config.pollIntervalMs);

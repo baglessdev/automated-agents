@@ -1,11 +1,11 @@
 // Entrypoint: webhook listener (Express) + background worker (polls SQLite).
-// Phase 1: architect only.
+// Phase 2: architect + coder.
 
 import express, { type Request } from 'express';
 import { verifyGitHubSignature } from './webhook';
 import { config } from './config';
 import { startWorker, queue } from './worker';
-import type { ArchitectPayload } from './types';
+import type { ArchitectPayload, CoderPayload } from './types';
 
 interface RawBodyRequest extends Request {
   rawBody?: Buffer;
@@ -31,14 +31,13 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
   const delivery = req.get('x-github-delivery');
   const body = req.body as {
     action?: string;
-    issue?: { number?: number; html_url?: string };
+    issue?: { number?: number; html_url?: string; pull_request?: unknown };
+    comment?: { body?: string; user?: { login?: string } };
     label?: { name?: string };
     repository?: { full_name?: string };
     pull_request?: { number?: number };
   };
 
-  // Always log the event; keeps delivery history visible even for
-  // events we don't act on.
   console.log(
     JSON.stringify({
       event,
@@ -51,7 +50,7 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
     }),
   );
 
-  // Route: issues.labeled with `agent:arch` → enqueue architect job
+  // Route 1: issues.labeled with `agent:arch` → architect job
   if (
     event === 'issues' &&
     body.action === 'labeled' &&
@@ -73,6 +72,35 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
         kind: 'architect',
         repo: payload.repo,
         issue: payload.issueNumber,
+      }),
+    );
+  }
+
+  // Route 2: issue_comment.created starting with /approve → coder job.
+  // Ignore PR comments (issue_comment fires for both; PR has `pull_request`).
+  if (
+    event === 'issue_comment' &&
+    body.action === 'created' &&
+    body.repository?.full_name &&
+    body.issue?.number != null &&
+    !body.issue.pull_request &&
+    /^\s*\/approve\b/i.test(body.comment?.body ?? '')
+  ) {
+    const payload: CoderPayload = {
+      repo: body.repository.full_name,
+      issueNumber: body.issue.number,
+      issueUrl: body.issue.html_url ?? '',
+    };
+    const job = queue.enqueue('coder', payload);
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'enqueued',
+        jobId: job.id,
+        kind: 'coder',
+        repo: payload.repo,
+        issue: payload.issueNumber,
+        commenter: body.comment?.user?.login,
       }),
     );
   }

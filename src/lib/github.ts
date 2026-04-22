@@ -11,6 +11,14 @@ export interface Issue {
   repoFullName: string;
 }
 
+export interface Comment {
+  id: number;
+  userLogin: string;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
 export function parseRepo(full: string): { owner: string; repo: string } {
   const [owner, repo] = full.split('/');
   if (!owner || !repo) {
@@ -31,6 +39,26 @@ export async function getIssue(repoFull: string, number: number): Promise<Issue>
   };
 }
 
+export async function listIssueComments(
+  repoFull: string,
+  number: number,
+): Promise<Comment[]> {
+  const { owner, repo } = parseRepo(repoFull);
+  const data = await octokit.paginate(octokit.issues.listComments, {
+    owner,
+    repo,
+    issue_number: number,
+    per_page: 100,
+  });
+  return data.map((c) => ({
+    id: c.id,
+    userLogin: c.user?.login ?? '',
+    body: c.body ?? '',
+    createdAt: c.created_at,
+    htmlUrl: c.html_url,
+  }));
+}
+
 export async function postIssueComment(
   repoFull: string,
   number: number,
@@ -42,6 +70,25 @@ export async function postIssueComment(
     repo,
     issue_number: number,
     body,
+  });
+  return data.html_url;
+}
+
+export async function openPullRequest(args: {
+  repoFull: string;
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+}): Promise<string> {
+  const { owner, repo } = parseRepo(args.repoFull);
+  const { data } = await octokit.pulls.create({
+    owner,
+    repo,
+    head: args.head,
+    base: args.base,
+    title: args.title,
+    body: args.body,
   });
   return data.html_url;
 }
