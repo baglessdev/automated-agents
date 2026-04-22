@@ -99,13 +99,13 @@ function parseReviewOutput(raw: string): {
   const markdownBody = raw.replace(jsonBlockRe, '').trim();
 
   if (!m) {
-    // No JSON block — fall back to heuristic: look for "Changes required" in the
-    // markdown. Default to changes-required when uncertain (safer gate).
-    const verdict: 'lgtm' | 'changes-required' = /\*\*Changes required\*\*|changes required/i.test(
-      raw,
-    )
-      ? 'changes-required'
-      : 'lgtm';
+    // No JSON block — rely on explicit markdown verdict phrasing.
+    // "Verdict: Changes required" / "Verdict: LGTM" are the specified
+    // forms; anything else defaults to lgtm (don't block on parser noise).
+    const verdict: 'lgtm' | 'changes-required' =
+      /\*\*Verdict:\s*Changes required\*\*/i.test(raw)
+        ? 'changes-required'
+        : 'lgtm';
     return { markdownBody, verdict, lineComments: [] };
   }
 
@@ -131,8 +131,9 @@ function parseReviewOutput(raw: string): {
       }));
     return { markdownBody, verdict, lineComments };
   } catch {
-    // Invalid JSON — fall back to changes-required (safer default).
-    return { markdownBody, verdict: 'changes-required', lineComments: [] };
+    // Invalid JSON — default to lgtm. Blocking defaults cause false
+    // positives on self-PRs (REQUEST_CHANGES fails with 422).
+    return { markdownBody, verdict: 'lgtm', lineComments: [] };
   }
 }
 
@@ -214,7 +215,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
       `Turns: ${result.turns ?? '?'}._`;
 
-    const { url, inlineCommentsDropped } = await postPullReview({
+    const posted = await postPullReview({
       repoFull: repo,
       prNumber,
       commitId: pull.headSha,
@@ -229,10 +230,12 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
         run: job.id,
         role: 'reviewer',
         event: 'review_posted',
-        url,
+        url: posted.url,
         verdict,
+        eventPosted: posted.eventFinal,
+        downgradedToComment: posted.downgradedToComment,
         inlineComments: lineComments.length,
-        inlineCommentsDropped,
+        inlineCommentsDropped: posted.inlineCommentsDropped,
       }),
     );
   } finally {

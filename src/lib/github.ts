@@ -162,35 +162,77 @@ export async function postPullReview(args: {
       body: c.body,
     })) ?? [];
 
-  try {
+  // We may end up downgrading event/stripping comments via retries.
+  // Track what actually got posted for the caller's audit log.
+  let eventFinal: typeof args.event = args.event;
+  let inlineCommentsDropped = false;
+  let downgradedToComment = false;
+
+  const tryPost = async (event: typeof args.event, cs: typeof comments, extraBody = '') => {
     const { data } = await octokit.pulls.createReview({
       owner,
       repo,
       pull_number: args.prNumber,
       commit_id: args.commitId,
-      body: args.body,
-      event: args.event,
-      comments,
+      body: args.body + extraBody,
+      event,
+      comments: cs,
     });
-    return { url: data.html_url, inlineCommentsDropped: false };
+    return data.html_url;
+  };
+
+  const isOwnPrError = (err: unknown): boolean =>
+    String((err as { message?: string }).message ?? '').includes(
+      'Can not request changes on your own pull request',
+    );
+
+  try {
+    const url = await tryPost(args.event, comments);
+    return { url, inlineCommentsDropped: false, eventFinal, downgradedToComment };
   } catch (err) {
-    // Most common failure: a line number doesn't match a position in the
-    // diff. Retry with just the summary body so we don't lose the review.
-    if (comments.length > 0) {
-      const { data } = await octokit.pulls.createReview({
-        owner,
-        repo,
-        pull_number: args.prNumber,
-        commit_id: args.commitId,
-        body:
-          args.body +
-          `\n\n---\n_Note: ${comments.length} inline comment(s) were ` +
-          `dropped because GitHub rejected their line references. ` +
-          `See the Bugs / correctness section above for the content._`,
-        event: args.event,
-      });
-      return { url: data.html_url, inlineCommentsDropped: true };
+    // Case 1: self-PR REQUEST_CHANGES rejection. Downgrade to COMMENT.
+    // Happens when the bot's GitHub identity is the PR author (single-
+    // account POC). Architectural fix is a separate reviewer identity;
+    // until then, preserve the verdict in the body text and post as COMMENT.
+    if (args.event === 'REQUEST_CHANGES' && isOwnPrError(err)) {
+      eventFinal = 'COMMENT';
+      downgradedToComment = true;
+      const note =
+        `\n\n---\n_Note: GitHub blocks REQUEST_CHANGES on your own PR. ` +
+        `Posted as a comment; see body verdict for the reviewer's actual call._`;
+      try {
+        const url = await tryPost('COMMENT', comments, note);
+        return { url, inlineCommentsDropped, eventFinal, downgradedToComment };
+      } catch (err2) {
+        // Fall through to comment-stripping retry below with the new event.
+        if (comments.length > 0) {
+          inlineCommentsDropped = true;
+          const url = await tryPost(
+            'COMMENT',
+            [],
+            note +
+              `\n\n_Also: ${comments.length} inline comment(s) were dropped ` +
+              `because GitHub rejected their line references._`,
+          );
+          return { url, inlineCommentsDropped, eventFinal, downgradedToComment };
+        }
+        throw err2;
+      }
     }
+
+    // Case 2: inline comment line refs don't match the diff. Retry without
+    // them so the summary still lands.
+    if (comments.length > 0) {
+      inlineCommentsDropped = true;
+      const url = await tryPost(
+        args.event,
+        [],
+        `\n\n---\n_Note: ${comments.length} inline comment(s) were ` +
+          `dropped because GitHub rejected their line references._`,
+      );
+      return { url, inlineCommentsDropped, eventFinal, downgradedToComment };
+    }
+
     throw err;
   }
 }
