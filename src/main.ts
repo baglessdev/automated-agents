@@ -110,11 +110,13 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
     );
   }
 
-  // Route 3: pull_request.opened by the bot → reviewer job.
+  // Route 3: pull_request.{opened,reopened} by the bot → reviewer job.
   // Distinguish bot PRs from human PRs by branch prefix `agent/`.
+  // `reopened` lets us retrigger for dev iteration without re-running
+  // architect + coder.
   if (
     event === 'pull_request' &&
-    body.action === 'opened' &&
+    (body.action === 'opened' || body.action === 'reopened') &&
     body.repository?.full_name &&
     body.pull_request?.number != null &&
     body.pull_request.head?.ref?.startsWith('agent/')
