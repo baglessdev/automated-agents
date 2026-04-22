@@ -203,14 +203,16 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
       ? `${TERSE_DISCIPLINE}\n\n${CODER_SYSTEM}`
       : CODER_SYSTEM;
 
-    // 5. Run Claude — needs Edit/Write/Bash to do real work
+    // 5. Run Claude — one-shot: just edit files, no verify loop.
+    // Bash intentionally NOT in allowedTools — Claude shouldn't run tests
+    // or iterate. CI on GitHub validates the diff after PR open.
     const result = await runClaude({
       systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
-      allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Grep'],
+      allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
       model: config.coderModel,
-      maxTurns: 50,
+      maxTurns: 25,
     });
 
     console.log(
