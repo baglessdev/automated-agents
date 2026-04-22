@@ -2,8 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  getIssue,
   getPull,
   getPullDiff,
+  parseClosedIssues,
   postPullReview,
   type LineComment,
 } from '../lib/github';
@@ -156,6 +158,20 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
   const diff = await getPullDiff(repo, prNumber);
   const approachBody = extractEmbeddedApproach(pull.body);
 
+  // Linked issues via Closes / Fixes / Resolves — used in Mode B (general
+  // review) when no approach is embedded, but always included as context.
+  const linkedNumbers = parseClosedIssues(pull.body);
+  const linkedIssues = await Promise.all(
+    linkedNumbers.map(async (n) => {
+      try {
+        const iss = await getIssue(repo, n);
+        return { number: iss.number, title: iss.title, body: iss.body };
+      } catch {
+        return { number: n, title: '(could not fetch)', body: '' };
+      }
+    }),
+  );
+
   const ws = newWorkspace(repo, pull.headRef);
   try {
     execFileSync('git', ['checkout', '-q', pull.headSha], {
@@ -170,7 +186,9 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
     const userPrompt = reviewerUserPrompt({
       prNumber,
       prTitle: pull.title,
+      prBody: pull.body,
       approachBody,
+      linkedIssues,
       diff,
       agentsMd,
       designMd,

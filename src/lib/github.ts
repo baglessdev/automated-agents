@@ -104,6 +104,20 @@ export async function openPullRequest(args: {
   return data.html_url;
 }
 
+// Extract issue numbers referenced by GitHub's "closing keywords" in a PR
+// body (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved).
+// Case-insensitive. De-duped.
+export function parseClosedIssues(prBody: string): number[] {
+  if (!prBody) return [];
+  const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  const nums = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(prBody)) !== null) {
+    nums.add(Number(m[1]));
+  }
+  return [...nums];
+}
+
 export async function getPull(repoFull: string, number: number): Promise<Pull> {
   const { owner, repo } = parseRepo(repoFull);
   const { data } = await octokit.pulls.get({ owner, repo, pull_number: number });

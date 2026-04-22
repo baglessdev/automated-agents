@@ -110,33 +110,44 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
     );
   }
 
-  // Route 3: pull_request.{opened,reopened} by the bot → reviewer job.
-  // Distinguish bot PRs from human PRs by branch prefix `agent/`.
-  // `reopened` lets us retrigger for dev iteration without re-running
-  // architect + coder.
+  // Route 3: reviewer triggers. Two paths:
+  //   (a) pull_request.{opened,reopened} on branch `agent/*` — bot PRs
+  //       auto-reviewed on open (no label needed).
+  //   (b) pull_request.labeled with `agent:review` — humans opt-in their
+  //       own PRs for agent review.
+  // Draft PRs skipped.
   if (
     event === 'pull_request' &&
-    (body.action === 'opened' || body.action === 'reopened') &&
     body.repository?.full_name &&
     body.pull_request?.number != null &&
-    body.pull_request.head?.ref?.startsWith('agent/')
+    !(body.pull_request as { draft?: boolean }).draft
   ) {
-    const payload: ReviewerPayload = {
-      repo: body.repository.full_name,
-      prNumber: body.pull_request.number,
-      prUrl: body.pull_request.html_url ?? '',
-    };
-    const job = queue.enqueue('reviewer', payload);
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        event: 'enqueued',
-        jobId: job.id,
-        kind: 'reviewer',
-        repo: payload.repo,
-        pr: payload.prNumber,
-      }),
-    );
+    const branch = body.pull_request.head?.ref ?? '';
+    const isBotBranch = branch.startsWith('agent/');
+    const isOpenOrReopen =
+      body.action === 'opened' || body.action === 'reopened';
+    const isReviewLabel =
+      body.action === 'labeled' && body.label?.name === 'agent:review';
+
+    if ((isBotBranch && isOpenOrReopen) || isReviewLabel) {
+      const payload: ReviewerPayload = {
+        repo: body.repository.full_name,
+        prNumber: body.pull_request.number,
+        prUrl: body.pull_request.html_url ?? '',
+      };
+      const job = queue.enqueue('reviewer', payload);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'enqueued',
+          jobId: job.id,
+          kind: 'reviewer',
+          repo: payload.repo,
+          pr: payload.prNumber,
+          trigger: isBotBranch ? 'bot-branch' : 'review-label',
+        }),
+      );
+    }
   }
 
   res.status(202).end();
