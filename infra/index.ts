@@ -133,8 +133,10 @@ mkdir -p /opt/automated-agents
 git clone https://github.com/baglessdev/automated-agents.git /opt/automated-agents
 cd /opt/automated-agents
 
-echo "[bootstrap] npm ci + build"
-npm ci --no-audit --no-fund
+echo "[bootstrap] npm install + build"
+# Using 'npm install' (not 'npm ci') so bootstrap succeeds whether or not
+# a lockfile is present. The repo ships a lockfile so it's still deterministic.
+npm install --no-audit --no-fund
 npm run build
 
 echo "[bootstrap] env file"
