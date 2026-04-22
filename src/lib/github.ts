@@ -144,7 +144,9 @@ export interface LineComment {
 // Post a PR review with optional inline comments. `event` is gated to
 // COMMENT or REQUEST_CHANGES — the agent never APPROVES (human-only).
 // On GitHub validation failure (e.g. line refs outside the diff), retries
-// once without the comments so the summary still lands.
+// once without the comments so the summary still lands. Also auto-downgrades
+// REQUEST_CHANGES → COMMENT when GitHub rejects with "own pull request"
+// (single-identity POC limitation).
 export async function postPullReview(args: {
   repoFull: string;
   prNumber: number;
@@ -152,7 +154,12 @@ export async function postPullReview(args: {
   body: string;
   event: 'COMMENT' | 'REQUEST_CHANGES';
   comments?: LineComment[];
-}): Promise<{ url: string; inlineCommentsDropped: boolean }> {
+}): Promise<{
+  url: string;
+  inlineCommentsDropped: boolean;
+  eventFinal: 'COMMENT' | 'REQUEST_CHANGES';
+  downgradedToComment: boolean;
+}> {
   const { owner, repo } = parseRepo(args.repoFull);
   const comments =
     args.comments?.map((c) => ({
