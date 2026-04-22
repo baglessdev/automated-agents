@@ -172,7 +172,18 @@ systemctl daemon-reload
 systemctl enable --now automated-agents
 
 echo "[bootstrap] caddy config"
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+# IMDSv2 token-auth fetch. The default curl to 169.254.169.254 without a
+# token returns empty on instances configured with httpTokens=required.
+# An empty PUBLIC_IP would produce a '.nip.io' Caddyfile, which LE rejects
+# with "subject does not qualify for certificate".
+IMDS_TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+PUBLIC_IP=$(curl -sH "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+if [[ -z "$PUBLIC_IP" ]]; then
+  echo "ERROR: could not fetch public IP from IMDS" >&2
+  exit 1
+fi
 HOSTNAME="\${PUBLIC_IP//./-}.nip.io"
 
 cat > /etc/caddy/Caddyfile <<CADDY
