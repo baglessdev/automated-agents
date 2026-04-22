@@ -5,8 +5,14 @@
 import { SqliteQueue } from './queue/sqlite';
 import { runArchitect } from './roles/architect';
 import { runCoder } from './roles/coder';
+import { runReviewer } from './roles/reviewer';
 import { config } from './config';
-import type { ArchitectPayload, CoderPayload, Job } from './types';
+import type {
+  ArchitectPayload,
+  CoderPayload,
+  Job,
+  ReviewerPayload,
+} from './types';
 
 const queue = new SqliteQueue(config.queuePath);
 
@@ -26,6 +32,9 @@ async function runOne(job: Job): Promise<void> {
         break;
       case 'coder':
         await runCoder(job as Job & { payload: CoderPayload });
+        break;
+      case 'reviewer':
+        await runReviewer(job as Job & { payload: ReviewerPayload });
         break;
       default: {
         const _exhaust: never = job.kind;

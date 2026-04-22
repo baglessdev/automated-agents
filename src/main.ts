@@ -1,11 +1,11 @@
 // Entrypoint: webhook listener (Express) + background worker (polls SQLite).
-// Phase 2: architect + coder.
+// Phase 3: architect + coder + reviewer.
 
 import express, { type Request } from 'express';
 import { verifyGitHubSignature } from './webhook';
 import { config } from './config';
 import { startWorker, queue } from './worker';
-import type { ArchitectPayload, CoderPayload } from './types';
+import type { ArchitectPayload, CoderPayload, ReviewerPayload } from './types';
 
 interface RawBodyRequest extends Request {
   rawBody?: Buffer;
@@ -35,7 +35,12 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
     comment?: { body?: string; user?: { login?: string } };
     label?: { name?: string };
     repository?: { full_name?: string };
-    pull_request?: { number?: number };
+    pull_request?: {
+      number?: number;
+      html_url?: string;
+      head?: { ref?: string };
+      user?: { login?: string };
+    };
   };
 
   console.log(
@@ -101,6 +106,33 @@ app.post('/webhook', verifyGitHubSignature, (req, res) => {
         repo: payload.repo,
         issue: payload.issueNumber,
         commenter: body.comment?.user?.login,
+      }),
+    );
+  }
+
+  // Route 3: pull_request.opened by the bot → reviewer job.
+  // Distinguish bot PRs from human PRs by branch prefix `agent/`.
+  if (
+    event === 'pull_request' &&
+    body.action === 'opened' &&
+    body.repository?.full_name &&
+    body.pull_request?.number != null &&
+    body.pull_request.head?.ref?.startsWith('agent/')
+  ) {
+    const payload: ReviewerPayload = {
+      repo: body.repository.full_name,
+      prNumber: body.pull_request.number,
+      prUrl: body.pull_request.html_url ?? '',
+    };
+    const job = queue.enqueue('reviewer', payload);
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'enqueued',
+        jobId: job.id,
+        kind: 'reviewer',
+        repo: payload.repo,
+        pr: payload.prNumber,
       }),
     );
   }

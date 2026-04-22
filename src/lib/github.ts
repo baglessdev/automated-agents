@@ -19,6 +19,17 @@ export interface Comment {
   htmlUrl: string;
 }
 
+export interface Pull {
+  number: number;
+  title: string;
+  body: string;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  htmlUrl: string;
+  userLogin: string;
+}
+
 export function parseRepo(full: string): { owner: string; repo: string } {
   const [owner, repo] = full.split('/');
   if (!owner || !repo) {
@@ -89,6 +100,55 @@ export async function openPullRequest(args: {
     base: args.base,
     title: args.title,
     body: args.body,
+  });
+  return data.html_url;
+}
+
+export async function getPull(repoFull: string, number: number): Promise<Pull> {
+  const { owner, repo } = parseRepo(repoFull);
+  const { data } = await octokit.pulls.get({ owner, repo, pull_number: number });
+  return {
+    number: data.number,
+    title: data.title,
+    body: data.body ?? '',
+    headRef: data.head.ref,
+    headSha: data.head.sha,
+    baseRef: data.base.ref,
+    htmlUrl: data.html_url,
+    userLogin: data.user?.login ?? '',
+  };
+}
+
+export async function getPullDiff(repoFull: string, number: number): Promise<string> {
+  const { owner, repo } = parseRepo(repoFull);
+  const resp = await octokit.request(
+    'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+    {
+      owner,
+      repo,
+      pull_number: number,
+      mediaType: { format: 'diff' },
+    },
+  );
+  // When mediaType.format is 'diff', resp.data is a raw string.
+  return resp.data as unknown as string;
+}
+
+export async function postPullReview(args: {
+  repoFull: string;
+  prNumber: number;
+  commitId: string;
+  body: string;
+}): Promise<string> {
+  const { owner, repo } = parseRepo(args.repoFull);
+  const { data } = await octokit.pulls.createReview({
+    owner,
+    repo,
+    pull_number: args.prNumber,
+    commit_id: args.commitId,
+    body: args.body,
+    // Hard architectural gate: reviewer agent is advisory. Humans approve.
+    event: 'COMMENT',
   });
   return data.html_url;
 }
