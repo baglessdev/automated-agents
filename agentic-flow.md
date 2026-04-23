@@ -150,18 +150,18 @@ block:
 
 ```mermaid
 flowchart TD
-  Start[PR triggered reviewer] --> Check{Embedded<br/>approach?}
-  Check -->|Yes| ModeA[Mode A: scope-enforced]
-  Check -->|No| ModeB[Mode B: general]
+  Start["PR triggered reviewer"] --> Check{"Embedded<br/>approach?"}
+  Check -->|Yes| ModeA["Mode A — scope-enforced"]
+  Check -->|No| ModeB["Mode B — general"]
 
-  ModeA --> AFiles[Strict file-list check<br/>vs `Files to change`]
-  ModeA --> AAccept[Acceptance-item check<br/>each `- [ ]`]
-  ModeA --> Common[AGENTS.md,<br/>tests, bugs,<br/>scope-drift]
+  ModeA --> AFiles["Strict file-list check<br/>vs Files-to-change"]
+  ModeA --> AAccept["Acceptance-item check<br/>each checkbox"]
+  ModeA --> Common["AGENTS.md,<br/>tests, bugs,<br/>scope-drift"]
 
-  ModeB --> BScope[Informal scope check<br/>vs PR title + linked issues]
+  ModeB --> BScope["Informal scope check<br/>vs PR title + linked issues"]
   ModeB --> Common
 
-  Common --> Out[Output: terse body +<br/>`review-json` block with<br/>verdict + inline comments]
+  Common --> Out["Terse body +<br/>review-json block<br/>(verdict + inline comments)"]
 ```
 
 | Mode | Trigger | Scope signal | Strictness |
