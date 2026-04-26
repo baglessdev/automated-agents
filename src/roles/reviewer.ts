@@ -206,6 +206,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       allowedTools: ['Read', 'Grep'],
       model: config.reviewerModel,
       maxTurns: 20,
+      maxThinkingTokens: config.reviewerThinkingBudget || undefined,
     });
 
     console.log(

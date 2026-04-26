@@ -191,6 +191,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       allowedTools: ['Read', 'Grep', 'Bash'],
       model: config.architectModel,
       maxTurns: 30,
+      maxThinkingTokens: config.architectThinkingBudget || undefined,
     });
 
     console.log(
