@@ -31,10 +31,9 @@ export async function classifyIssue(args: {
     cwd: args.cwd,
     allowedTools: [], // triage is a one-shot classification, no exploration
     model: 'claude-haiku-4-5',
-    // Structured output uses a synthetic StructuredOutput tool — its
-    // call + result consume turns. 5 gives headroom for a one-shot
-    // schema retry without masking real iteration loops.
-    maxTurns: 5,
+    // Diagnostic: bumped max turns while we figure out why Haiku is
+    // burning through them. Will trim back once we see the failure mode.
+    maxTurns: 15,
     outputFormat: { type: 'json_schema', schema: TRIAGE_SCHEMA as Record<string, unknown> },
   });
 
