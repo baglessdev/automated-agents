@@ -1,5 +1,11 @@
 // Architect prompt. Produces an `approach.md` as a markdown comment body
 // that downstream coder + reviewer consume as the task contract.
+//
+// Per-task payload uses XML-tagged fields inside a markdown skeleton —
+// XML tags make field boundaries unambiguous and stable, which helps
+// the model attend reliably and improves cache reuse on stable prefixes.
+// Role/system prompt stays markdown (static instructions, style, output
+// format).
 
 // Caveman-style output discipline. Inspired by
 // github.com/juliusbrussee/caveman. Cuts output tokens ~50-65% without
@@ -29,6 +35,15 @@ You are the architect agent in a three-role AI software delivery pipeline:
 Your output is a GitHub comment body. It must be plain markdown. It must be
 self-contained and factual: the coder and reviewer only see what you write.
 
+## Inputs (XML-tagged fields in the user prompt)
+
+- \`<task>\` — one-line description of this turn.
+- \`<issue>\` with \`<number>\`, \`<title>\`, \`<body>\` — the GitHub issue.
+- \`<agents_md>\` — binding process + coding rules.
+- \`<design_md>\` — architectural context + invariants.
+- \`<agent_dir_notes>\` — optional. Concatenated \`.agent/*.md\` content.
+- \`<file_tree>\` — workspace file listing (target repo main branch).
+
 ## Hard rules
 
 1. **Ground every concrete claim in the repo.** You have bash tools (cat,
@@ -38,14 +53,14 @@ self-contained and factual: the coder and reviewer only see what you write.
 2. **Detect the language/framework** by reading build-tool files (go.mod,
    package.json, pom.xml, Cargo.toml, pyproject.toml). Match your approach
    to what the project actually uses.
-3. **Read the project conventions** — AGENTS.md, DESIGN.md, any .agent/*.md.
-   Your approach must respect them.
+3. **Read the project conventions** — \`<agents_md>\`, \`<design_md>\`, any
+   \`<agent_dir_notes>\`. Your approach must respect them.
 4. **Narrow scope**. List only the files that actually need to change.
    Smaller is safer — the reviewer flags drift, so over-scoping a target
    costs you. New files count as targets and must be listed.
 5. **Pair code with tests.** If a source file is a target, its adjacent
    test file must also be a target.
-6. **Never include Forbidden paths** from AGENTS.md as targets.
+6. **Never include Forbidden paths** from \`<agents_md>\` as targets.
 7. **Expand vague acceptance.** If the human wrote "solid test coverage"
    or "clean code", replace with specific testable criteria (status codes,
    error shapes, edge cases, named test scenarios).
@@ -112,37 +127,35 @@ export function architectUserPrompt(args: {
     fileTree,
   } = args;
 
-  const extras = agentDirNotes.trim()
-    ? `## Additional conventions (.agent/*.md)\n\n${agentDirNotes}\n`
+  const agentDirSection = agentDirNotes.trim()
+    ? `\n<agent_dir_notes>\n${agentDirNotes}\n</agent_dir_notes>\n`
     : '';
 
   return `
-## Issue #${issueNumber}: ${issueTitle}
-
-${issueBody || '(empty body)'}
-
----
-
-## Process + coding rules (AGENTS.md — binding contract)
-
-${agentsMd}
-
----
-
-## Architecture (DESIGN.md)
-
-${designMd}
-
----
-
-${extras}## Workspace file tree (target repo main branch)
-
-\`\`\`
-${fileTree}
-\`\`\`
-
----
-
+<task>
 Produce the approach.md body per the system prompt's required shape.
+Read the inputs below; verify concrete claims against the repo via bash
+tools where needed.
+</task>
+
+<agents_md>
+${agentsMd}
+</agents_md>
+
+<design_md>
+${designMd}
+</design_md>
+${agentDirSection}
+<file_tree>
+${fileTree}
+</file_tree>
+
+<issue>
+<number>${issueNumber}</number>
+<title>${issueTitle}</title>
+<body>
+${issueBody || '(empty body)'}
+</body>
+</issue>
 `.trim();
 }

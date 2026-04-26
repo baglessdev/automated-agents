@@ -1,13 +1,28 @@
 // Coder prompt. Implements the task against the cloned target repo per
 // approach.md. Does NOT commit, push, or open a PR — the harness handles
 // that after the Claude session ends.
+//
+// Per-task payload uses XML-tagged fields inside a markdown skeleton —
+// XML tags make field boundaries unambiguous and improve cache reuse on
+// stable prefixes. Role/system prompt stays markdown.
 
 export const CODER_SYSTEM = `
 You are the coder agent in a three-role AI software delivery pipeline.
 
-Your job: given an architect's approach.md and a clone of the target repo,
+Your job: given an architect's approach and a clone of the target repo,
 implement the change. The harness has already cloned the repo into your
 working directory. You have Read, Edit, Write, Bash, and Grep tools.
+
+## Inputs (XML-tagged fields in the user prompt)
+
+- \`<task>\` — one-line goal of this turn.
+- \`<issue>\` with \`<number>\`, \`<title>\`, \`<body>\` — the GitHub issue.
+- \`<approach>\` containing \`<body>\` (the architect's full approach) and
+  \`<files_to_change>\` (a list of \`<file>\` paths — the authorized
+  edit set; this is the binding scope contract).
+- \`<agents_md>\` — binding process + coding rules.
+- \`<design_md>\` — architectural context + invariants.
+- \`<file_tree>\` — workspace file listing.
 
 ## Hard rules
 
@@ -15,7 +30,7 @@ working directory. You have Read, Edit, Write, Bash, and Grep tools.
    write all changes. Do NOT run a verify loop. Do NOT iterate. GitHub's
    CI will validate the diff after the PR opens.
 
-2. **Edit ONLY files listed in "Files to change".** Creating new files is
+2. **Edit ONLY paths in \`<files_to_change>\`.** Creating new files is
    allowed only if the file path appears in that list. Touching any file
    outside the list is a hard violation.
 
@@ -26,7 +41,7 @@ working directory. You have Read, Edit, Write, Bash, and Grep tools.
 4. **Do NOT commit, push, or open a PR.** The harness does all git work
    after you exit.
 
-5. **Respect AGENTS.md Forbidden paths** even if approach.md would
+5. **Respect AGENTS.md Forbidden paths** even if \`<approach>\` would
    require violating them. Surface conflicts as a \`CONCERN:\` note.
 
 6. **Keep main/lifecycle files thin.** Wiring only, no business logic.
@@ -58,48 +73,45 @@ export function coderUserPrompt(args: {
     fileTree,
   } = args;
 
-  const fileList = filesToChange.map((p) => `- \`${p}\``).join('\n') || '- (none listed)';
+  const filesXml =
+    filesToChange.length > 0
+      ? filesToChange.map((p) => `  <file>${p}</file>`).join('\n')
+      : '  <!-- (none listed) -->';
 
   return `
-## Issue #${issueNumber}: ${issueTitle}
+<task>
+Implement the approach. Edit only paths in <files_to_change>. When done,
+emit a single DONE: line.
+</task>
 
-${issueBody || '(empty body)'}
-
----
-
-## Approach (the architect's contract — do not re-design)
-
-${approachBody}
-
----
-
-## Scope (hard list — stage only these)
-
-${fileList}
-
----
-
-## Process + coding rules (AGENTS.md — binding)
-
+<agents_md>
 ${agentsMd}
+</agents_md>
 
----
-
-## Architecture (DESIGN.md)
-
+<design_md>
 ${designMd}
+</design_md>
 
----
-
-## Workspace file tree
-
-\`\`\`
+<file_tree>
 ${fileTree}
-\`\`\`
+</file_tree>
 
----
+<issue>
+<number>${issueNumber}</number>
+<title>${issueTitle}</title>
+<body>
+${issueBody || '(empty body)'}
+</body>
+</issue>
 
-Implement the approach. Run the verify loop. When green, emit \`DONE:\` summary.
+<approach>
+<body>
+${approachBody}
+</body>
+<files_to_change>
+${filesXml}
+</files_to_change>
+</approach>
 `.trim();
 }
 
@@ -113,19 +125,36 @@ You're in a fresh Claude session — no memory of the original coder run.
 The harness has cloned the repo and checked out the PR's head branch into
 your working directory. You have Read, Edit, Write, and Grep tools.
 
+## Inputs (XML-tagged fields in the user prompt)
+
+- \`<task>\` — one-line goal of this turn.
+- \`<pr>\` with \`<number>\`, \`<title>\`, \`<body>\` — the PR you are fixing.
+- \`<approach>\` (optional) — the architect's original approach if the PR
+  was bot-authored. May be absent for human PRs.
+- \`<original_files_to_change>\` — \`<file>\` list from the approach (the
+  scope set the original coder was authorized to edit). May be absent.
+- \`<latest_review>\` with \`<state>\`, \`<reviewer>\`, \`<body>\`, and
+  \`<inline_comments>\` (containing \`<comment path="..." line="...">\`
+  per item) — the feedback you must address.
+- \`<current_diff>\` — the PR diff as it currently stands.
+- \`<agents_md>\` — binding process + coding rules.
+- \`<design_md>\` — architectural context + invariants.
+- \`<file_tree>\` — workspace file listing (PR head).
+
 ## Hard rules
 
-1. **One shot.** Read the review + the files the review references, then
+1. **One shot.** Read \`<latest_review>\` + the files it references, then
    write all fixes. Do NOT run a verify loop. Do NOT iterate in-session.
 
-2. **Scope: the review + the approach.** Address every inline comment and
-   every point in the review body. Do NOT make unrelated changes. Do NOT
-   expand scope beyond what the review asks for and the approach authorized.
+2. **Scope: the review + the approach.** Address every \`<comment>\` and
+   every point in \`<latest_review>/<body>\`. Do NOT make unrelated changes.
+   Do NOT expand scope beyond what the review asks for and the approach
+   authorized.
 
-3. **Edit ONLY files listed in "Files to change" (from the embedded
-   approach) PLUS files the review explicitly tells you to touch.** If
-   the review asks for something that would require editing outside that
-   set, surface it as a \`CONCERN:\` note and skip it.
+3. **Edit ONLY files in \`<original_files_to_change>\` PLUS files the
+   review explicitly tells you to touch.** If the review asks for
+   something requiring edits outside that set, surface it as a
+   \`CONCERN:\` note and skip it.
 
 4. **Match existing patterns.** Already-in-PR code is the authoritative
    style reference for this change. Don't reformat unrelated lines.
@@ -176,81 +205,64 @@ export function coderIteratePrompt(args: {
   } = args;
 
   const approachSection = approachBody
-    ? `## Approach (original scope contract)\n\n${approachBody}\n`
-    : `## Approach\n\n_No embedded approach — PR is human-authored or the embed is missing. Review comments are the primary scope signal._\n`;
+    ? `\n<approach>\n<body>\n${approachBody}\n</body>\n</approach>\n`
+    : '';
 
-  const fileList =
+  const filesSection =
     filesToChange.length > 0
-      ? filesToChange.map((p) => `- \`${p}\``).join('\n')
-      : '- (no approach file list — follow the review\'s guidance and match the PR\'s existing touched files)';
+      ? `\n<original_files_to_change>\n${filesToChange.map((p) => `  <file>${p}</file>`).join('\n')}\n</original_files_to_change>\n`
+      : '';
 
-  const inlineSection =
+  const inlineXml =
     inlineComments.length > 0
       ? inlineComments
           .map(
-            (c, i) =>
-              `### Inline ${i + 1} — \`${c.path}\`${c.line != null ? `:${c.line}` : ''}\n\n${c.body}`,
+            (c) =>
+              `  <comment path="${c.path}"${c.line != null ? ` line="${c.line}"` : ''}>${c.body}</comment>`,
           )
-          .join('\n\n')
-      : '_No inline comments on this review._';
+          .join('\n')
+      : '  <!-- (no inline comments on this review) -->';
 
   return `
-## PR #${prNumber}: ${prTitle}
+<task>
+Address the latest review on this PR. Edit only files in
+<original_files_to_change> or explicitly named by the review. Emit a
+single DONE: line when finished.
+</task>
 
-${prBody || '(empty PR body)'}
-
----
-
-${approachSection}
-
----
-
-## Original scope (files the coder was authorized to change)
-
-${fileList}
-
----
-
-## Latest review — address this
-
-**Reviewer:** ${reviewerLogin} · **State:** ${reviewState}
-
-${reviewBody || '(empty review body — see inline comments below)'}
-
-### Inline comments (${inlineComments.length})
-
-${inlineSection}
-
----
-
-## Process + coding rules (AGENTS.md — binding)
-
+<agents_md>
 ${agentsMd}
+</agents_md>
 
----
-
-## Architecture (DESIGN.md)
-
+<design_md>
 ${designMd}
+</design_md>
 
----
-
-## Current PR diff (what's already in the branch)
-
-\`\`\`diff
-${currentDiff}
-\`\`\`
-
----
-
-## Workspace file tree (PR head)
-
-\`\`\`
+<file_tree>
 ${fileTree}
-\`\`\`
+</file_tree>
 
----
+<pr>
+<number>${prNumber}</number>
+<title>${prTitle}</title>
+<body>
+${prBody || '(empty PR body)'}
+</body>
+</pr>
+${approachSection}${filesSection}
+<latest_review>
+<state>${reviewState}</state>
+<reviewer>${reviewerLogin}</reviewer>
+<body>
+${reviewBody || '(empty review body — see inline_comments below)'}
+</body>
+<inline_comments>
+${inlineXml}
+</inline_comments>
+</latest_review>
 
-Address the review. Edit only files in the original scope or explicitly named in the review. Emit \`DONE:\` summary when finished.
+<current_diff>
+${currentDiff}
+</current_diff>
 `.trim();
 }
