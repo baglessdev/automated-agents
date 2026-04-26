@@ -25,6 +25,7 @@ import {
 } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
+import { buildSymbolIndex } from '../lib/symbol-index';
 import { parseApproach } from '../lib/approach';
 import {
   configIdentity,
@@ -54,48 +55,6 @@ function readOptional(path: string): string {
   } catch {
     return '';
   }
-}
-
-function buildTree(repoDir: string): string {
-  const out = execFileSync(
-    'find',
-    [
-      '.',
-      '-maxdepth',
-      '4',
-      '(',
-      '-path',
-      './.git',
-      '-o',
-      '-path',
-      './node_modules',
-      '-o',
-      '-path',
-      './vendor',
-      '-o',
-      '-path',
-      './target',
-      '-o',
-      '-path',
-      './dist',
-      '-o',
-      '-path',
-      './build',
-      ')',
-      '-prune',
-      '-o',
-      '-type',
-      'f',
-      '-print',
-    ],
-    { cwd: repoDir, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
-  );
-  return out
-    .split('\n')
-    .map((l) => l.replace(/^\.\//, ''))
-    .filter(Boolean)
-    .sort()
-    .join('\n');
 }
 
 function extractEmbeddedApproach(prBody: string): string {
@@ -216,7 +175,7 @@ export async function runCoderIterate(
       readOptional(join(ws.repoDir, 'AGENTS.md')) || '(AGENTS.md missing)';
     const designMd =
       readOptional(join(ws.repoDir, 'DESIGN.md')) || '(DESIGN.md missing)';
-    const fileTree = buildTree(ws.repoDir);
+    const symbolIndex = buildSymbolIndex(ws.repoDir);
     const currentDiff = await getPullDiff(repo, prNumber);
 
     const userPrompt = coderIteratePrompt({
@@ -236,7 +195,7 @@ export async function runCoderIterate(
       currentDiff,
       agentsMd,
       designMd,
-      fileTree,
+      symbolIndex,
     });
 
     const systemPrompt = config.terseOutputs
