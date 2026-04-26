@@ -31,6 +31,35 @@ conversation state. See the "Session isolation" section of `agentic-flow.md`.
 
 ---
 
+## Recent improvements (Phase 5)
+
+The Phase 5 sprint reclaimed ~80% of the Agent SDK's surface area we
+weren't using. Each item is a separate commit on `main`; see
+[`roadmap.md`](./roadmap.md) for the full multi-phase plan.
+
+| Tag | Change |
+|---|---|
+| **B1** | Cache + cost metrics per run. Logs `cacheRead`, `cacheCreation`, `costUsd` from the SDK's result message. Verified live: post-warm runs ~65% cheaper than cold. |
+| **B2** | Extended thinking enabled on architect + reviewer (configurable budget). Roughly doubles wall time on judgment-heavy roles in exchange for better plans / reviews. |
+| **C1–C4** | All four user-prompt builders rewritten with XML-tagged dynamic fields (`<issue>`, `<approach>`, `<diff>`, …) inside a markdown skeleton. Stable prefix → cleaner cache reuse + ~11% steady-state cost reduction. |
+| **C7+C8** | Each prompt file carries a semver `*_PROMPT_VERSION`; logged on every `claude_done` event for eval / regression attribution. |
+| **B3–B6** | Structured output via JSON schema. Architect, reviewer, coder-iterate emit machine-validated objects (`Approach`, `Review`, `Iteration`); harness builds the markdown artifacts via dedicated renderers. `parseReviewOutput` regex deleted. |
+| **K4** | Git author identity (`GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`) is now configurable instead of hardcoded. |
+
+### Notable workaround — `parameter` envelope
+
+Sonnet 4.5 consistently wraps its `StructuredOutput` tool_use input as
+`{ "parameter": <actual_object> }` regardless of the schema we pass.
+The SDK's Ajv validator checks against the unwrapped schema and every
+retry fails identically, exhausting the 5-attempt budget
+(`error_max_structured_output_retries`). We work around this in
+`src/lib/claude.ts` by wrapping the schema with a `parameter` envelope
+before sending and unwrapping on receive. Roles see no change. If the
+model behavior shifts in a future Claude version, the wrap/unwrap can
+be deleted.
+
+---
+
 ## Architecture at a glance
 
 ```
@@ -76,11 +105,15 @@ Optional (sensible defaults exist):
 | `QUEUE_PATH` | `/var/lib/automated-agents/queue.db` | SQLite queue file |
 | `ARCH_LABEL` | `agent:arch` | Label that fires architect |
 | `POLL_INTERVAL_MS` | `2000` | Worker idle poll |
-| `ARCHITECT_MODEL` | `claude-haiku-4-5` | |
-| `CODER_MODEL` | `claude-haiku-4-5` | (EC2 runs with `claude-sonnet-4-5` — Haiku underperforms on multi-file coder tasks) |
-| `REVIEWER_MODEL` | `claude-haiku-4-5` | |
+| `ARCHITECT_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` so extended thinking + structured output engage |
+| `CODER_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` — Haiku underperforms on multi-file tasks |
+| `REVIEWER_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` — same reasoning as architect |
+| `ARCHITECT_THINKING_BUDGET` | `5000` | Extended-thinking budget (tokens) for architect. Set 0 to disable. Requires Sonnet/Opus. |
+| `REVIEWER_THINKING_BUDGET` | `5000` | Same for reviewer. Coder + coder-iterate intentionally have no thinking — translation work, not reasoning. |
 | `TERSE_OUTPUTS` | `1` | Prepends a "caveman-style" discipline block to every role's system prompt |
 | `ITERATE_MAX` | `3` | Cap on `/iterate` cycles per PR |
+| `GIT_AUTHOR_NAME` | `agent` | Git author identity used by coder + coder-iterate when committing |
+| `GIT_AUTHOR_EMAIL` | `agent@baglessdev` | Same |
 
 ---
 
@@ -174,9 +207,11 @@ src/
 │   └── approach.ts         Parse approach.md → Files-to-change list
 │
 ├── prompts/
-│   ├── architect.ts        System + user prompts, TERSE_DISCIPLINE
-│   ├── coder.ts            coder + coder_iterate prompts
-│   └── reviewer.ts         Mode A (scope-enforced) + Mode B (general)
+│   ├── architect.ts        System + user prompts, TERSE_DISCIPLINE, ARCHITECT_PROMPT_VERSION
+│   ├── coder.ts            coder + coder_iterate prompts + versions
+│   ├── reviewer.ts         Mode A (scope-enforced) + Mode B (general) + version
+│   ├── schemas.ts          JSON schemas for structured outputs (B3–B5)
+│   └── render.ts           Markdown renderers from structured outputs
 │
 └── roles/
     ├── architect.ts
@@ -197,9 +232,13 @@ infra/
   to COMMENT and preserves the verdict in the body. Proper fix is a GitHub
   App or separate bot accounts per role.
 - **No retries on transient failures.** A failed job stays failed.
-- **Architect and reviewer are Haiku.** Coder runs Sonnet — Haiku is
-  insufficient on multi-file tasks.
-- **Cost per full loop** ≈ $0.17, wall time ≈ 3 min. See the issue tracker
-  for optimization plans.
+- **All three roles run on Sonnet 4.5** in the live deployment (env-overridden
+  from the Haiku defaults). Required for extended thinking + structured
+  output. Cost-per-full-loop went from ~$0.17 (Haiku-mostly era) to
+  ~$0.89 with Sonnet across the board on a meatier issue. Triage-driven
+  model routing (roadmap B13) will tier this back down.
+- **Sonnet 4.5 wraps structured-output inputs in a `parameter` envelope.**
+  Worked around in `claude.ts`; see "Notable workaround" above.
 
-See [`agentic-flow.md`](./agentic-flow.md) for the full design and diagrams.
+See [`agentic-flow.md`](./agentic-flow.md) for the full design and
+diagrams, and [`roadmap.md`](./roadmap.md) for the next-phase plan.

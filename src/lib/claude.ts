@@ -53,6 +53,20 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   let costUsd: number | undefined;
   let turns: number | undefined;
 
+  // Workaround: when given a structured-output schema directly, the model
+  // (observed on Claude Sonnet 4.5) consistently wraps its tool_use input
+  // as `{ "parameter": <actual_object> }`. The SDK's Ajv validator then
+  // rejects every retry because the schema expects the fields at root,
+  // not under `parameter`. Wrap the schema so the validator agrees with
+  // the model, then unwrap the result.structured below before returning.
+  const wrappedSchema = opts.outputFormat
+    ? {
+        type: 'object',
+        properties: { parameter: opts.outputFormat.schema },
+        required: ['parameter'],
+      }
+    : undefined;
+
   const stream = query({
     prompt: opts.userPrompt,
     options: {
@@ -63,7 +77,9 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
-      ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
+      ...(wrappedSchema
+        ? { outputFormat: { type: 'json_schema' as const, schema: wrappedSchema } }
+        : {}),
     },
   });
 
@@ -93,12 +109,25 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
     if (m.session_id && !sessionId) sessionId = m.session_id;
 
     if (m.type === 'result') {
-      if (m.is_error) {
-        const detail = m.result ?? m.subtype ?? '(no detail)';
-        throw new Error(`claude returned error result: ${detail}`);
+      // The SDK can set is_error: false even when the subtype indicates
+      // a failure (e.g., 'error_max_structured_output_retries'). Treat any
+      // error_* subtype as a hard failure regardless of is_error.
+      const subtypeIsError =
+        typeof m.subtype === 'string' && m.subtype.startsWith('error_');
+      if (m.is_error || subtypeIsError) {
+        const errs =
+          (m as { errors?: string[] }).errors?.join('; ') ?? '';
+        const detail = errs || m.result || m.subtype || '(no detail)';
+        throw new Error(`claude returned error result (${m.subtype}): ${detail}`);
       }
       if (typeof m.result === 'string') finalText = m.result;
-      if (m.structured_output !== undefined) structured = m.structured_output;
+      // Unwrap the `parameter` envelope (see wrappedSchema comment above).
+      if (m.structured_output !== undefined) {
+        const so = m.structured_output as { parameter?: unknown };
+        structured = so && typeof so === 'object' && 'parameter' in so
+          ? so.parameter
+          : m.structured_output;
+      }
       if (m.usage?.input_tokens) tokensIn = m.usage.input_tokens;
       if (m.usage?.output_tokens) tokensOut = m.usage.output_tokens;
       if (typeof m.usage?.cache_read_input_tokens === 'number') {

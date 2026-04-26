@@ -7,8 +7,10 @@
 // surface area. Each property's `description` should read like a
 // docstring an engineer would understand without external context.
 //
-// Schemas are strict (every meaningful field required, additionalProperties
-// disabled where it matters). Caught early > silently malformed.
+// Schemas mark every meaningful field as required. We deliberately do NOT
+// set `additionalProperties: false` — Anthropic's structured-output
+// validator burns retries on strict schemas in practice. Accepting extra
+// fields silently is cheaper than failing 5×.
 
 export const APPROACH_SCHEMA = {
   type: 'object',
@@ -43,7 +45,6 @@ export const APPROACH_SCHEMA = {
           },
         },
         required: ['path', 'rationale'],
-        additionalProperties: false,
       },
     },
     acceptance_criteria: {
@@ -60,7 +61,6 @@ export const APPROACH_SCHEMA = {
     },
   },
   required: ['goal', 'implementation_approach', 'files_to_change', 'acceptance_criteria', 'risks'],
-  additionalProperties: false,
 } as const;
 
 export interface Approach {
@@ -117,12 +117,10 @@ export const REVIEW_SCHEMA = {
           },
         },
         required: ['path', 'line', 'body'],
-        additionalProperties: false,
       },
     },
   },
   required: ['verdict', 'summary', 'inline_comments'],
-  additionalProperties: false,
 } as const;
 
 export interface ReviewLineComment {
@@ -169,7 +167,6 @@ export const ITERATION_SCHEMA = {
           },
         },
         required: ['what_was_fixed'],
-        additionalProperties: false,
       },
     },
     unaddressed_comments: {
@@ -194,7 +191,6 @@ export const ITERATION_SCHEMA = {
           },
         },
         required: ['reason'],
-        additionalProperties: false,
       },
     },
     new_concerns: {
@@ -205,7 +201,6 @@ export const ITERATION_SCHEMA = {
     },
   },
   required: ['summary', 'addressed_comments', 'unaddressed_comments', 'new_concerns'],
-  additionalProperties: false,
 } as const;
 
 export interface AddressedComment {
