@@ -20,7 +20,7 @@ import {
   listUntrackedModified,
   statDiff,
 } from '../lib/gitops';
-import { CODER_SYSTEM, coderUserPrompt } from '../prompts/coder';
+import { CODER_PROMPT_VERSION, CODER_SYSTEM, coderUserPrompt } from '../prompts/coder';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
 import { config } from '../config';
 import type { CoderPayload, Job } from '../types';
@@ -221,6 +221,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         run: job.id,
         role: 'coder',
         event: 'claude_done',
+        promptVersion: CODER_PROMPT_VERSION,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,
