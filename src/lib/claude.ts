@@ -53,6 +53,8 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   let costUsd: number | undefined;
   let turns: number | undefined;
 
+  const stderrLines: string[] = [];
+
   const stream = query({
     prompt: opts.userPrompt,
     options: {
@@ -62,6 +64,9 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       model: opts.model ?? 'claude-haiku-4-5',
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
+      stderr: (data: string) => {
+        stderrLines.push(data);
+      },
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
       ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
     },
@@ -96,6 +101,20 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       if (m.is_error) {
         const detail = m.result ?? m.subtype ?? '(no detail)';
         throw new Error(`claude returned error result: ${detail}`);
+      }
+      // Diagnostic dump for the structured-output path: log the full
+      // result message + recent stderr so we can see why structured_output
+      // is or isn't populated. Temporary — will trim once outputFormat is
+      // verified working in our env.
+      if (opts.outputFormat) {
+        console.warn(
+          JSON.stringify({
+            level: 'debug',
+            event: 'claude_result_diagnostic',
+            resultMessage: m,
+            stderrTail: stderrLines.join('').split('\n').slice(-30),
+          }),
+        );
       }
       if (typeof m.result === 'string') finalText = m.result;
       if (m.structured_output !== undefined) structured = m.structured_output;
