@@ -14,18 +14,31 @@ export interface ClaudeRunResult {
   sessionId?: string;
   tokensIn?: number;
   tokensOut?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  costUsd?: number;
   turns?: number;
   durationMs: number;
 }
 
 // Run one Claude Agent SDK query. Aggregates streamed messages, returns
 // the final assistant text + usage metadata. Throws on error messages.
+//
+// Cache metrics: the Agent SDK does not let callers place explicit
+// `cache_control` breakpoints — caching is handled inside the CLI
+// subprocess. What we CAN do is observe whether caching took effect via
+// `cacheReadTokens` / `cacheCreationTokens` in the result message. Roles
+// log these so we can tell at a glance whether the cache is being used.
+// `costUsd` comes straight from the SDK (precomputed across all turns).
 export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const started = Date.now();
   let finalText = '';
   let sessionId: string | undefined;
   let tokensIn: number | undefined;
   let tokensOut: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheCreationTokens: number | undefined;
+  let costUsd: number | undefined;
   let turns: number | undefined;
 
   const stream = query({
@@ -51,7 +64,13 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       subtype?: string;
       session_id?: string;
       result?: string;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
+      total_cost_usd?: number;
       num_turns?: number;
       is_error?: boolean;
     };
@@ -65,6 +84,13 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       if (typeof m.result === 'string') finalText = m.result;
       if (m.usage?.input_tokens) tokensIn = m.usage.input_tokens;
       if (m.usage?.output_tokens) tokensOut = m.usage.output_tokens;
+      if (typeof m.usage?.cache_read_input_tokens === 'number') {
+        cacheReadTokens = m.usage.cache_read_input_tokens;
+      }
+      if (typeof m.usage?.cache_creation_input_tokens === 'number') {
+        cacheCreationTokens = m.usage.cache_creation_input_tokens;
+      }
+      if (typeof m.total_cost_usd === 'number') costUsd = m.total_cost_usd;
       if (typeof m.num_turns === 'number') turns = m.num_turns;
     }
   }
@@ -78,6 +104,9 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
     sessionId,
     tokensIn,
     tokensOut,
+    cacheReadTokens,
+    cacheCreationTokens,
+    costUsd,
     turns,
     durationMs: Date.now() - started,
   };
