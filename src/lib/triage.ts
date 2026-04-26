@@ -31,7 +31,10 @@ export async function classifyIssue(args: {
     cwd: args.cwd,
     allowedTools: [], // triage is a one-shot classification, no exploration
     model: 'claude-haiku-4-5',
-    maxTurns: 1,
+    // Structured output uses a synthetic StructuredOutput tool — its
+    // call + result consume turns. 5 gives headroom for a one-shot
+    // schema retry without masking real iteration loops.
+    maxTurns: 5,
     outputFormat: { type: 'json_schema', schema: TRIAGE_SCHEMA as Record<string, unknown> },
   });
 
