@@ -54,6 +54,15 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   let turns: number | undefined;
 
   const stderrLines: string[] = [];
+  // Diagnostic capture: structured-output failures surface as tool_result
+  // content on user messages (the SDK doesn't put them in `errors`/`result`).
+  // We snapshot StructuredOutput tool_use inputs + their tool_result errors
+  // so we can see exactly which Ajv rule the model tripped on.
+  const structuredAttempts: Array<{
+    inputPreview: string;
+    error?: string;
+  }> = [];
+  const pendingStructuredCalls = new Map<string, string>();
 
   const stream = query({
     prompt: opts.userPrompt,
@@ -97,6 +106,48 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
 
     if (m.session_id && !sessionId) sessionId = m.session_id;
 
+    // Capture StructuredOutput tool_use inputs + their tool_result errors.
+    // This is the only place we get the actual Ajv validation error text.
+    if (opts.outputFormat) {
+      const am = msg as {
+        type?: string;
+        message?: { content?: unknown };
+      };
+      if (am.type === 'assistant' && Array.isArray(am.message?.content)) {
+        for (const block of am.message.content as Array<{
+          type?: string;
+          name?: string;
+          id?: string;
+          input?: unknown;
+        }>) {
+          if (block.type === 'tool_use' && block.name === 'StructuredOutput') {
+            const preview = JSON.stringify(block.input).slice(0, 800);
+            pendingStructuredCalls.set(block.id ?? '', preview);
+          }
+        }
+      }
+      if (am.type === 'user' && Array.isArray(am.message?.content)) {
+        for (const block of am.message.content as Array<{
+          type?: string;
+          tool_use_id?: string;
+          content?: unknown;
+          is_error?: boolean;
+        }>) {
+          if (block.type === 'tool_result' && pendingStructuredCalls.has(block.tool_use_id ?? '')) {
+            const inputPreview = pendingStructuredCalls.get(block.tool_use_id ?? '') ?? '';
+            const errText =
+              typeof block.content === 'string'
+                ? block.content
+                : JSON.stringify(block.content);
+            if (block.is_error) {
+              structuredAttempts.push({ inputPreview, error: errText.slice(0, 500) });
+            }
+            pendingStructuredCalls.delete(block.tool_use_id ?? '');
+          }
+        }
+      }
+    }
+
     if (m.type === 'result') {
       // The SDK can set is_error: false even when the subtype indicates
       // a failure (e.g., 'error_max_structured_output_retries'). Treat any
@@ -107,6 +158,18 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
         const errs =
           (m as { errors?: string[] }).errors?.join('; ') ?? '';
         const detail = errs || m.result || m.subtype || '(no detail)';
+        // Dump captured StructuredOutput attempts so we can see which Ajv
+        // rule each retry tripped on. Only present when outputFormat is set.
+        if (structuredAttempts.length > 0) {
+          console.warn(
+            JSON.stringify({
+              level: 'debug',
+              event: 'structured_output_attempts',
+              count: structuredAttempts.length,
+              attempts: structuredAttempts,
+            }),
+          );
+        }
         throw new Error(`claude returned error result (${m.subtype}): ${detail}`);
       }
       if (typeof m.result === 'string') finalText = m.result;
