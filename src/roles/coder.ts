@@ -179,7 +179,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
   // 3. Fresh workspace
   const ws = newWorkspace(repo);
   try {
-    configIdentity(ws.repoDir, 'agent', 'agent@baglessdev');
+    configIdentity(ws.repoDir, config.gitAuthorName, config.gitAuthorEmail);
     const branch = `agent/${runId}-issue${issueNumber}`;
     checkoutNewBranch(ws.repoDir, branch);
 

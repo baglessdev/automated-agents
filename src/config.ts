@@ -64,4 +64,13 @@ export const config = {
   // coder-commit marker). Exists to stop infinite feedback loops when
   // the reviewer keeps finding issues the coder can't fix.
   maxIterations: Number(optional('ITERATE_MAX', '3')),
+
+  // Git author identity used when the coder + coder-iterate roles
+  // commit. Configurable so the frame deployment can present commits
+  // under a frame-owned identity. Defaults preserve baglessdev for
+  // backward compatibility. Once the GitHub App migration lands
+  // (Theme F), the App's installation token will provide the canonical
+  // identity per role and these values become a fallback.
+  gitAuthorName: optional('GIT_AUTHOR_NAME', 'agent'),
+  gitAuthorEmail: optional('GIT_AUTHOR_EMAIL', 'agent@baglessdev'),
 };

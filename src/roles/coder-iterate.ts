@@ -197,7 +197,7 @@ export async function runCoderIterate(
 
   const ws = newWorkspace(repo, pull.headRef);
   try {
-    configIdentity(ws.repoDir, 'agent', 'agent@baglessdev');
+    configIdentity(ws.repoDir, config.gitAuthorName, config.gitAuthorEmail);
 
     // Ensure we're at exactly the PR head SHA (workspace clones the branch
     // tip, which matches HEAD unless the PR was pushed between clone and
