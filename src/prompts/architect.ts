@@ -6,6 +6,14 @@
 // the model attend reliably and improves cache reuse on stable prefixes.
 // Role/system prompt stays markdown (static instructions, style, output
 // format).
+//
+// Versioning convention: each *_PROMPT_VERSION below tracks the
+// system prompt it sits next to. Bump major on output-format changes
+// (breaks downstream parsers), minor on input-format or new instructions,
+// patch on wording tweaks. Logged on every claude_done event so eval
+// comparisons can attribute outcomes to a specific prompt revision.
+
+export const ARCHITECT_PROMPT_VERSION = '1.0.0';
 
 // Caveman-style output discipline. Inspired by
 // github.com/juliusbrussee/caveman. Cuts output tokens ~50-65% without

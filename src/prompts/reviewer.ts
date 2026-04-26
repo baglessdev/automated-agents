@@ -5,6 +5,10 @@
 // Per-task payload uses XML-tagged fields inside a markdown skeleton —
 // the presence/absence of <approach> distinguishes Mode A from Mode B.
 // Output shape stays markdown body + machine-readable review-json block.
+//
+// See architect.ts for the *_PROMPT_VERSION convention.
+
+export const REVIEWER_PROMPT_VERSION = '1.0.0';
 
 export const REVIEWER_SYSTEM = `
 You are the review agent. You review ANY PR — whether a teammate or another

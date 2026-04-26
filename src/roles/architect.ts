@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { getIssue, postIssueComment } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
-import { ARCHITECT_SYSTEM, TERSE_DISCIPLINE, architectUserPrompt } from '../prompts/architect';
+import {
+  ARCHITECT_PROMPT_VERSION,
+  ARCHITECT_SYSTEM,
+  TERSE_DISCIPLINE,
+  architectUserPrompt,
+} from '../prompts/architect';
 import { config } from '../config';
 import type { ArchitectPayload, Job } from '../types';
 
@@ -200,6 +205,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
         run: job.id,
         role: 'architect',
         event: 'claude_done',
+        promptVersion: ARCHITECT_PROMPT_VERSION,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

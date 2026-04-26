@@ -35,7 +35,11 @@ import {
   listUntrackedModified,
   statDiff,
 } from '../lib/gitops';
-import { CODER_ITERATE_SYSTEM, coderIteratePrompt } from '../prompts/coder';
+import {
+  CODER_ITERATE_PROMPT_VERSION,
+  CODER_ITERATE_SYSTEM,
+  coderIteratePrompt,
+} from '../prompts/coder';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
 import { config } from '../config';
 import type { IteratePayload, Job } from '../types';
@@ -252,6 +256,7 @@ export async function runCoderIterate(
         run: job.id,
         role: 'coder_iterate',
         event: 'claude_done',
+        promptVersion: CODER_ITERATE_PROMPT_VERSION,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

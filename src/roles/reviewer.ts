@@ -11,7 +11,11 @@ import {
 } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
-import { REVIEWER_SYSTEM, reviewerUserPrompt } from '../prompts/reviewer';
+import {
+  REVIEWER_PROMPT_VERSION,
+  REVIEWER_SYSTEM,
+  reviewerUserPrompt,
+} from '../prompts/reviewer';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
 import { config } from '../config';
 import type { Job, ReviewerPayload } from '../types';
@@ -215,6 +219,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
         run: job.id,
         role: 'reviewer',
         event: 'claude_done',
+        promptVersion: REVIEWER_PROMPT_VERSION,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

@@ -5,6 +5,10 @@
 // Per-task payload uses XML-tagged fields inside a markdown skeleton —
 // XML tags make field boundaries unambiguous and improve cache reuse on
 // stable prefixes. Role/system prompt stays markdown.
+//
+// See architect.ts for the *_PROMPT_VERSION convention.
+
+export const CODER_PROMPT_VERSION = '1.0.0';
 
 export const CODER_SYSTEM = `
 You are the coder agent in a three-role AI software delivery pipeline.
@@ -119,6 +123,8 @@ ${filesXml}
 // after the reviewer (or another human) posted review feedback. Same tools
 // and hard rules as the fresh coder; the ONLY difference is that context is
 // now "the PR as it stands + the latest review" instead of "the approach".
+export const CODER_ITERATE_PROMPT_VERSION = '1.0.0';
+
 export const CODER_ITERATE_SYSTEM = `
 You are the coder agent responding to review feedback on an existing PR.
 You're in a fresh Claude session — no memory of the original coder run.
