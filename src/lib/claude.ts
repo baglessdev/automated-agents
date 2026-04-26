@@ -98,23 +98,16 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
     if (m.session_id && !sessionId) sessionId = m.session_id;
 
     if (m.type === 'result') {
-      if (m.is_error) {
-        const detail = m.result ?? m.subtype ?? '(no detail)';
-        throw new Error(`claude returned error result: ${detail}`);
-      }
-      // Diagnostic dump for the structured-output path: log the full
-      // result message + recent stderr so we can see why structured_output
-      // is or isn't populated. Temporary — will trim once outputFormat is
-      // verified working in our env.
-      if (opts.outputFormat) {
-        console.warn(
-          JSON.stringify({
-            level: 'debug',
-            event: 'claude_result_diagnostic',
-            resultMessage: m,
-            stderrTail: stderrLines.join('').split('\n').slice(-30),
-          }),
-        );
+      // The SDK can set is_error: false even when the subtype indicates
+      // a failure (e.g., 'error_max_structured_output_retries'). Treat any
+      // error_* subtype as a hard failure regardless of is_error.
+      const subtypeIsError =
+        typeof m.subtype === 'string' && m.subtype.startsWith('error_');
+      if (m.is_error || subtypeIsError) {
+        const errs =
+          (m as { errors?: string[] }).errors?.join('; ') ?? '';
+        const detail = errs || m.result || m.subtype || '(no detail)';
+        throw new Error(`claude returned error result (${m.subtype}): ${detail}`);
       }
       if (typeof m.result === 'string') finalText = m.result;
       if (m.structured_output !== undefined) structured = m.structured_output;
