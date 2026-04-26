@@ -17,6 +17,11 @@ export interface ClaudeRunOptions {
   // object as result.structured. If validation fails the SDK retries
   // internally; persistent failure surfaces as an error result.
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> };
+  // When true, disable all built-in tools (Read, Bash, etc) — the
+  // model can only call the synthetic StructuredOutput tool added by
+  // outputFormat. Used by triage so Haiku doesn't waste turns
+  // exploring the workspace.
+  disableBuiltinTools?: boolean;
 }
 
 export interface ClaudeRunResult {
@@ -76,6 +81,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       model: opts.model ?? 'claude-haiku-4-5',
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
+      ...(opts.disableBuiltinTools ? { tools: [] as string[] } : {}),
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
       ...(wrappedSchema
         ? { outputFormat: { type: 'json_schema' as const, schema: wrappedSchema } }
@@ -107,62 +113,6 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
     };
 
     if (m.session_id && !sessionId) sessionId = m.session_id;
-
-    // Diagnostic (temporary): when outputFormat is set, capture every
-    // assistant tool_use block + matching user tool_result so we can
-    // see why a structured-output call burned its turn budget.
-    if (opts.outputFormat) {
-      const am = msg as { type?: string; message?: { content?: unknown } };
-      if (am.type === 'assistant' && Array.isArray(am.message?.content)) {
-        for (const block of am.message.content as Array<{
-          type?: string;
-          name?: string;
-          input?: unknown;
-          text?: string;
-        }>) {
-          if (block.type === 'tool_use') {
-            console.warn(
-              JSON.stringify({
-                level: 'debug',
-                event: 'tool_use_observed',
-                name: block.name,
-                inputPreview: JSON.stringify(block.input).slice(0, 500),
-              }),
-            );
-          } else if (block.type === 'text' && block.text) {
-            console.warn(
-              JSON.stringify({
-                level: 'debug',
-                event: 'assistant_text_observed',
-                textPreview: block.text.slice(0, 300),
-              }),
-            );
-          }
-        }
-      }
-      if (am.type === 'user' && Array.isArray(am.message?.content)) {
-        for (const block of am.message.content as Array<{
-          type?: string;
-          content?: unknown;
-          is_error?: boolean;
-        }>) {
-          if (block.type === 'tool_result') {
-            const errText =
-              typeof block.content === 'string'
-                ? block.content
-                : JSON.stringify(block.content);
-            console.warn(
-              JSON.stringify({
-                level: 'debug',
-                event: 'tool_result_observed',
-                isError: block.is_error,
-                contentPreview: errText.slice(0, 500),
-              }),
-            );
-          }
-        }
-      }
-    }
 
     if (m.type === 'result') {
       // The SDK can set is_error: false even when the subtype indicates

@@ -29,11 +29,14 @@ export async function classifyIssue(args: {
     systemPrompt: TRIAGE_SYSTEM,
     userPrompt,
     cwd: args.cwd,
-    allowedTools: [], // triage is a one-shot classification, no exploration
     model: 'claude-haiku-4-5',
-    // Diagnostic: bumped max turns while we figure out why Haiku is
-    // burning through them. Will trim back once we see the failure mode.
-    maxTurns: 15,
+    // disableBuiltinTools=true — the model can only call StructuredOutput.
+    // Without this Haiku tries to Read /issue and similar nonsense, burning
+    // turns on tool errors before classifying.
+    disableBuiltinTools: true,
+    // 5 leaves room for a one-shot schema validation retry (assistant
+    // tool_use → tool_result → assistant retry). Triage shouldn't need more.
+    maxTurns: 5,
     outputFormat: { type: 'json_schema', schema: TRIAGE_SCHEMA as Record<string, unknown> },
   });
 
