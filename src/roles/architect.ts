@@ -10,6 +10,8 @@ import {
   TERSE_DISCIPLINE,
   architectUserPrompt,
 } from '../prompts/architect';
+import { APPROACH_SCHEMA, type Approach } from '../prompts/schemas';
+import { renderApproachMarkdown } from '../prompts/render';
 import { config } from '../config';
 import type { ArchitectPayload, Job } from '../types';
 
@@ -197,6 +199,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       model: config.architectModel,
       maxTurns: 30,
       maxThinkingTokens: config.architectThinkingBudget || undefined,
+      outputFormat: { type: 'json_schema', schema: APPROACH_SCHEMA as Record<string, unknown> },
     });
 
     console.log(
@@ -217,14 +220,17 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       }),
     );
 
-    // 6. Post the approach as an issue comment, marked for the coder
+    // 6. Post the approach as an issue comment, marked for the coder.
+    // The architect emits structured fields; we render the markdown.
+    const approach = result.structured as Approach;
     const runId = job.id.slice(0, 8);
     const commentBody =
       `<!-- agent-approach run=${runId} -->\n\n` +
-      result.text.trim() +
+      renderApproachMarkdown(approach, issue.number, issue.title) +
       '\n\n---\n' +
       `_Posted by architect agent. Run: \`${runId}\` · ` +
       `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
+      `Cost: $${result.costUsd?.toFixed(4) ?? '?'} · ` +
       `Turns: ${result.turns ?? '?'}._\n\n` +
       `**Next:** comment \`/approve\` on this issue to proceed to the coder.`;
 

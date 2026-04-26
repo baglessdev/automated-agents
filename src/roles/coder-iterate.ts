@@ -41,6 +41,8 @@ import {
   coderIteratePrompt,
 } from '../prompts/coder';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
+import { ITERATION_SCHEMA, type Iteration } from '../prompts/schemas';
+import { renderIterationSummary } from '../prompts/render';
 import { config } from '../config';
 import type { IteratePayload, Job } from '../types';
 
@@ -195,7 +197,7 @@ export async function runCoderIterate(
 
   const ws = newWorkspace(repo, pull.headRef);
   try {
-    configIdentity(ws.repoDir, 'agent', 'agent@baglessdev');
+    configIdentity(ws.repoDir, config.gitAuthorName, config.gitAuthorEmail);
 
     // Ensure we're at exactly the PR head SHA (workspace clones the branch
     // tip, which matches HEAD unless the PR was pushed between clone and
@@ -248,7 +250,10 @@ export async function runCoderIterate(
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
       model: config.coderModel,
       maxTurns: 25,
+      outputFormat: { type: 'json_schema', schema: ITERATION_SCHEMA as Record<string, unknown> },
     });
+
+    const iteration = result.structured as Iteration;
 
     console.log(
       JSON.stringify({
@@ -257,6 +262,9 @@ export async function runCoderIterate(
         role: 'coder_iterate',
         event: 'claude_done',
         promptVersion: CODER_ITERATE_PROMPT_VERSION,
+        addressedCount: iteration.addressed_comments.length,
+        unaddressedCount: iteration.unaddressed_comments.length,
+        newConcernsCount: iteration.new_concerns.length,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,
@@ -327,17 +335,16 @@ export async function runCoderIterate(
 
     push(ws.repoDir, pull.headRef, repo, config.githubToken);
 
-    const summary = result.text.split('\n')[0]?.replace(/^DONE:\s*/i, '') ?? '';
-
     await postIssueComment(
       repo,
       prNumber,
       `Coder iterate run \`${runId}\` pushed \`${sha.slice(0, 7)}\` to ` +
-        `\`${pull.headRef}\` (iteration ${prior + 1}/${config.maxIterations}).` +
-        (summary ? `\n\n**Summary:** ${summary}` : '') +
+        `\`${pull.headRef}\` (iteration ${prior + 1}/${config.maxIterations}).\n\n` +
+        renderIterationSummary(iteration) +
         `\n\n### Diff stat\n\n\`\`\`\n${diffStat}\`\`\`\n\n` +
         `_Session: \`${result.sessionId ?? '-'}\` · ` +
         `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
+        `Cost: $${result.costUsd?.toFixed(4) ?? '?'} · ` +
         `Turns: ${result.turns ?? '?'}_`,
     );
 
