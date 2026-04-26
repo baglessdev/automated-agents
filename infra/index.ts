@@ -114,7 +114,7 @@ apt-get update -qq
 echo "[bootstrap] base packages"
 apt-get install -y -qq \\
   ca-certificates curl gnupg debian-keyring debian-archive-keyring \\
-  apt-transport-https git build-essential
+  apt-transport-https git build-essential universal-ctags
 
 echo "[bootstrap] node 20"
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -

@@ -26,7 +26,7 @@ working directory. You have Read, Edit, Write, Bash, and Grep tools.
   edit set; this is the binding scope contract).
 - \`<agents_md>\` — binding process + coding rules.
 - \`<design_md>\` — architectural context + invariants.
-- \`<file_tree>\` — workspace file listing.
+- \`<symbol_index>\` — compact symbol index (path:line kind name) of the workspace.
 
 ## Hard rules
 
@@ -64,7 +64,7 @@ export function coderUserPrompt(args: {
   filesToChange: string[];
   agentsMd: string;
   designMd: string;
-  fileTree: string;
+  symbolIndex: string;
 }): string {
   const {
     issueNumber,
@@ -74,7 +74,7 @@ export function coderUserPrompt(args: {
     filesToChange,
     agentsMd,
     designMd,
-    fileTree,
+    symbolIndex,
   } = args;
 
   const filesXml =
@@ -96,9 +96,9 @@ ${agentsMd}
 ${designMd}
 </design_md>
 
-<file_tree>
-${fileTree}
-</file_tree>
+<symbol_index>
+${symbolIndex}
+</symbol_index>
 
 <issue>
 <number>${issueNumber}</number>
@@ -145,7 +145,7 @@ your working directory. You have Read, Edit, Write, and Grep tools.
 - \`<current_diff>\` — the PR diff as it currently stands.
 - \`<agents_md>\` — binding process + coding rules.
 - \`<design_md>\` — architectural context + invariants.
-- \`<file_tree>\` — workspace file listing (PR head).
+- \`<symbol_index>\` — compact symbol index (path:line kind name) at the PR head.
 
 ## Hard rules
 
@@ -206,7 +206,7 @@ export function coderIteratePrompt(args: {
   currentDiff: string;
   agentsMd: string;
   designMd: string;
-  fileTree: string;
+  symbolIndex: string;
 }): string {
   const {
     prNumber,
@@ -221,7 +221,7 @@ export function coderIteratePrompt(args: {
     currentDiff,
     agentsMd,
     designMd,
-    fileTree,
+    symbolIndex,
   } = args;
 
   const approachSection = approachBody
@@ -258,9 +258,9 @@ ${agentsMd}
 ${designMd}
 </design_md>
 
-<file_tree>
-${fileTree}
-</file_tree>
+<symbol_index>
+${symbolIndex}
+</symbol_index>
 
 <pr>
 <number>${prNumber}</number>

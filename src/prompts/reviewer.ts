@@ -28,7 +28,7 @@ pair of eyes against the project's rules.
 - \`<diff>\` — always present. The thing you're reviewing.
 - \`<agents_md>\` — binding process + coding rules.
 - \`<design_md>\` — architectural context + invariants.
-- \`<file_tree>\` — workspace listing at the PR head.
+- \`<symbol_index>\` — compact symbol index (path:line kind name) at the PR head.
 
 ## Two review modes — pick based on what's in the inputs
 
@@ -103,7 +103,7 @@ export function reviewerUserPrompt(args: {
   diff: string;
   agentsMd: string;
   designMd: string;
-  fileTree: string;
+  symbolIndex: string;
 }): string {
   const {
     prNumber,
@@ -114,7 +114,7 @@ export function reviewerUserPrompt(args: {
     diff,
     agentsMd,
     designMd,
-    fileTree,
+    symbolIndex,
   } = args;
 
   const approachSection = approachBody
@@ -146,9 +146,9 @@ ${agentsMd}
 ${designMd}
 </design_md>
 
-<file_tree>
-${fileTree}
-</file_tree>
+<symbol_index>
+${symbolIndex}
+</symbol_index>
 
 <pr>
 <number>${prNumber}</number>

@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getIssue, postIssueComment } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
+import { buildSymbolIndex } from '../lib/symbol-index';
 import {
   ARCHITECT_PROMPT_VERSION,
   ARCHITECT_SYSTEM,
@@ -36,119 +36,6 @@ function readAgentDir(root: string): string {
   }
 }
 
-function buildTree(repoDir: string): string {
-  // Language-agnostic: include common source + config files, 4 levels deep.
-  const out = execFileSync(
-    'find',
-    [
-      '.',
-      '-maxdepth',
-      '4',
-      '(',
-      '-path',
-      './.git',
-      '-o',
-      '-path',
-      './node_modules',
-      '-o',
-      '-path',
-      './vendor',
-      '-o',
-      '-path',
-      './target',
-      '-o',
-      '-path',
-      './dist',
-      '-o',
-      '-path',
-      './build',
-      ')',
-      '-prune',
-      '-o',
-      '-type',
-      'f',
-      '(',
-      '-name',
-      '*.go',
-      '-o',
-      '-name',
-      '*.ts',
-      '-o',
-      '-name',
-      '*.tsx',
-      '-o',
-      '-name',
-      '*.js',
-      '-o',
-      '-name',
-      '*.jsx',
-      '-o',
-      '-name',
-      '*.py',
-      '-o',
-      '-name',
-      '*.java',
-      '-o',
-      '-name',
-      '*.kt',
-      '-o',
-      '-name',
-      '*.rs',
-      '-o',
-      '-name',
-      '*.rb',
-      '-o',
-      '-name',
-      '*.md',
-      '-o',
-      '-name',
-      '*.yml',
-      '-o',
-      '-name',
-      '*.yaml',
-      '-o',
-      '-name',
-      '*.toml',
-      '-o',
-      '-name',
-      '*.json',
-      '-o',
-      '-name',
-      'Taskfile*',
-      '-o',
-      '-name',
-      'Makefile*',
-      '-o',
-      '-name',
-      'go.mod',
-      '-o',
-      '-name',
-      'go.sum',
-      '-o',
-      '-name',
-      'package.json',
-      '-o',
-      '-name',
-      'pom.xml',
-      '-o',
-      '-name',
-      'Cargo.toml',
-      '-o',
-      '-name',
-      'pyproject.toml',
-      ')',
-      '-print',
-    ],
-    { cwd: repoDir, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
-  );
-  return out
-    .split('\n')
-    .map((l) => l.replace(/^\.\//, ''))
-    .filter(Boolean)
-    .sort()
-    .join('\n');
-}
-
 export async function runArchitect(job: Job & { payload: ArchitectPayload }): Promise<void> {
   const { repo, issueNumber } = job.payload;
 
@@ -173,7 +60,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
     const agentsMd = readOptional(join(ws.repoDir, 'AGENTS.md'));
     const designMd = readOptional(join(ws.repoDir, 'DESIGN.md'));
     const agentDirNotes = readAgentDir(ws.repoDir);
-    const fileTree = buildTree(ws.repoDir);
+    const symbolIndex = buildSymbolIndex(ws.repoDir);
 
     // 4. Compose prompt
     const userPrompt = architectUserPrompt({
@@ -183,7 +70,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       agentsMd: agentsMd || '(AGENTS.md missing)',
       designMd: designMd || '(DESIGN.md missing)',
       agentDirNotes,
-      fileTree,
+      symbolIndex,
     });
 
     // 5. Run Claude with Read/Grep/Bash tools, cwd pointed at the clone

@@ -50,7 +50,7 @@ self-contained and factual: the coder and reviewer only see what you write.
 - \`<agents_md>\` — binding process + coding rules.
 - \`<design_md>\` — architectural context + invariants.
 - \`<agent_dir_notes>\` — optional. Concatenated \`.agent/*.md\` content.
-- \`<file_tree>\` — workspace file listing (target repo main branch).
+- \`<symbol_index>\` — compact symbol index (path:line kind name) of the target repo main branch.
 
 ## Hard rules
 
@@ -104,7 +104,7 @@ export function architectUserPrompt(args: {
   agentsMd: string;
   designMd: string;
   agentDirNotes: string; // concatenation of .agent/*.md, or "" if none
-  fileTree: string;
+  symbolIndex: string;
 }): string {
   const {
     issueNumber,
@@ -113,7 +113,7 @@ export function architectUserPrompt(args: {
     agentsMd,
     designMd,
     agentDirNotes,
-    fileTree,
+    symbolIndex,
   } = args;
 
   const agentDirSection = agentDirNotes.trim()
@@ -135,9 +135,9 @@ ${agentsMd}
 ${designMd}
 </design_md>
 ${agentDirSection}
-<file_tree>
-${fileTree}
-</file_tree>
+<symbol_index>
+${symbolIndex}
+</symbol_index>
 
 <issue>
 <number>${issueNumber}</number>
