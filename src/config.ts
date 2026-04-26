@@ -42,6 +42,18 @@ export const config = {
   coderModel: optional('CODER_MODEL', 'claude-haiku-4-5'),
   reviewerModel: optional('REVIEWER_MODEL', 'claude-haiku-4-5'),
 
+  // Extended-thinking budgets per judgment-heavy role. 0 disables
+  // thinking; positive values let the model reason internally before
+  // emitting a response. Coder + coder-iterate intentionally not given
+  // a budget — they translate plans to code, not reason about them.
+  //
+  // Note: extended thinking requires a Sonnet 3.7+ or Opus 4 model.
+  // Haiku does not support thinking; the SDK silently drops the
+  // parameter on unsupported models, so a non-zero budget is safe but
+  // ineffective unless the role is on a capable model.
+  architectThinkingBudget: Number(optional('ARCHITECT_THINKING_BUDGET', '5000')),
+  reviewerThinkingBudget: Number(optional('REVIEWER_THINKING_BUDGET', '5000')),
+
   // Terseness toggle. When true, prepends a "caveman-style" output
   // discipline block to every role's system prompt to cut output tokens
   // by ~50-65% without losing substance. Default on for POC.

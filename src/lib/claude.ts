@@ -7,6 +7,11 @@ export interface ClaudeRunOptions {
   allowedTools?: string[];
   model?: string;
   maxTurns?: number;
+  // Extended thinking budget — max tokens the model may spend reasoning
+  // internally before producing a response. Off by default. Worth
+  // enabling on judgment-heavy roles (architect, reviewer); not worth
+  // it on translation-heavy roles (coder).
+  maxThinkingTokens?: number;
 }
 
 export interface ClaudeRunResult {
@@ -50,6 +55,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       model: opts.model ?? 'claude-haiku-4-5',
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
+      ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
     },
   });
 
