@@ -12,10 +12,16 @@ export interface ClaudeRunOptions {
   // enabling on judgment-heavy roles (architect, reviewer); not worth
   // it on translation-heavy roles (coder).
   maxThinkingTokens?: number;
+  // Structured output schema. When set, the SDK requires the final
+  // response to validate against the schema and exposes the parsed
+  // object as result.structured. If validation fails the SDK retries
+  // internally; persistent failure surfaces as an error result.
+  outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> };
 }
 
 export interface ClaudeRunResult {
-  text: string; // final assistant message text
+  text: string; // final assistant message text (empty when outputFormat is used)
+  structured?: unknown; // present when outputFormat was set
   sessionId?: string;
   tokensIn?: number;
   tokensOut?: number;
@@ -38,6 +44,7 @@ export interface ClaudeRunResult {
 export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const started = Date.now();
   let finalText = '';
+  let structured: unknown;
   let sessionId: string | undefined;
   let tokensIn: number | undefined;
   let tokensOut: number | undefined;
@@ -56,6 +63,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       maxTurns: opts.maxTurns ?? 20,
       permissionMode: 'bypassPermissions',
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
+      ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
     },
   });
 
@@ -70,6 +78,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       subtype?: string;
       session_id?: string;
       result?: string;
+      structured_output?: unknown;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -85,9 +94,11 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
 
     if (m.type === 'result') {
       if (m.is_error) {
-        throw new Error(`claude returned error result: ${m.result ?? '(no detail)'}`);
+        const detail = m.result ?? m.subtype ?? '(no detail)';
+        throw new Error(`claude returned error result: ${detail}`);
       }
       if (typeof m.result === 'string') finalText = m.result;
+      if (m.structured_output !== undefined) structured = m.structured_output;
       if (m.usage?.input_tokens) tokensIn = m.usage.input_tokens;
       if (m.usage?.output_tokens) tokensOut = m.usage.output_tokens;
       if (typeof m.usage?.cache_read_input_tokens === 'number') {
@@ -101,12 +112,19 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
     }
   }
 
-  if (!finalText) {
+  // When outputFormat is set, the SDK returns the parsed object via
+  // structured_output; the text result may be empty. Otherwise the text
+  // result is the model's final markdown response and must be present.
+  if (!opts.outputFormat && !finalText) {
     throw new Error('claude produced no final result text');
+  }
+  if (opts.outputFormat && structured === undefined) {
+    throw new Error('claude produced no structured output despite outputFormat being set');
   }
 
   return {
     text: finalText,
+    structured,
     sessionId,
     tokensIn,
     tokensOut,

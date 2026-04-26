@@ -17,6 +17,8 @@ import {
   reviewerUserPrompt,
 } from '../prompts/reviewer';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
+import { REVIEW_SCHEMA, type Review } from '../prompts/schemas';
+import { renderReviewMarkdown } from '../prompts/render';
 import { config } from '../config';
 import type { Job, ReviewerPayload } from '../types';
 
@@ -90,59 +92,6 @@ function extractEmbeddedApproach(prBody: string): string {
   return m ? m[1].trim() : '';
 }
 
-// Parse the <!-- review-json --> block embedded in Claude's output.
-// Returns { markdownBody (without json block), verdict, lineComments }.
-function parseReviewOutput(raw: string): {
-  markdownBody: string;
-  verdict: 'lgtm' | 'changes-required';
-  lineComments: LineComment[];
-} {
-  const jsonBlockRe =
-    /<!--\s*review-json\s*-->\s*\n```json\s*\n([\s\S]*?)\n```\s*\n<!--\s*\/review-json\s*-->/;
-  const m = raw.match(jsonBlockRe);
-
-  // Strip the JSON block (and markers) from the body regardless of parse outcome.
-  const markdownBody = raw.replace(jsonBlockRe, '').trim();
-
-  if (!m) {
-    // No JSON block — rely on explicit markdown verdict phrasing.
-    // "Verdict: Changes required" / "Verdict: LGTM" are the specified
-    // forms; anything else defaults to lgtm (don't block on parser noise).
-    const verdict: 'lgtm' | 'changes-required' =
-      /\*\*Verdict:\s*Changes required\*\*/i.test(raw)
-        ? 'changes-required'
-        : 'lgtm';
-    return { markdownBody, verdict, lineComments: [] };
-  }
-
-  try {
-    const parsed = JSON.parse(m[1]) as {
-      verdict?: string;
-      line_comments?: Array<{
-        path?: string;
-        line?: number;
-        side?: string;
-        body?: string;
-      }>;
-    };
-    const verdict =
-      parsed.verdict === 'changes-required' ? 'changes-required' : 'lgtm';
-    const lineComments = (parsed.line_comments ?? [])
-      .filter((c) => c.path && typeof c.line === 'number' && c.body)
-      .map<LineComment>((c) => ({
-        path: c.path as string,
-        line: c.line as number,
-        side: c.side === 'LEFT' ? 'LEFT' : 'RIGHT',
-        body: c.body as string,
-      }));
-    return { markdownBody, verdict, lineComments };
-  } catch {
-    // Invalid JSON — default to lgtm. Blocking defaults cause false
-    // positives on self-PRs (REQUEST_CHANGES fails with 422).
-    return { markdownBody, verdict: 'lgtm', lineComments: [] };
-  }
-}
-
 export async function runReviewer(job: Job & { payload: ReviewerPayload }): Promise<void> {
   const { repo, prNumber } = job.payload;
   const runId = job.id.slice(0, 8);
@@ -211,6 +160,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       model: config.reviewerModel,
       maxTurns: 20,
       maxThinkingTokens: config.reviewerThinkingBudget || undefined,
+      outputFormat: { type: 'json_schema', schema: REVIEW_SCHEMA as Record<string, unknown> },
     });
 
     console.log(
@@ -231,15 +181,22 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       }),
     );
 
-    const { markdownBody, verdict, lineComments } = parseReviewOutput(result.text);
+    const review = result.structured as Review;
+    const lineComments: LineComment[] = review.inline_comments.map((c) => ({
+      path: c.path,
+      line: c.line,
+      side: c.side,
+      body: c.body,
+    }));
 
     const body =
-      markdownBody +
+      renderReviewMarkdown(review) +
       `\n\n---\n` +
       `_Posted by reviewer agent. Run: \`${runId}\` · ` +
-      `Verdict: \`${verdict}\` · ` +
+      `Verdict: \`${review.verdict}\` · ` +
       `Inline: ${lineComments.length} · ` +
       `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
+      `Cost: $${result.costUsd?.toFixed(4) ?? '?'} · ` +
       `Turns: ${result.turns ?? '?'}._`;
 
     const posted = await postPullReview({
@@ -247,7 +204,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       prNumber,
       commitId: pull.headSha,
       body,
-      event: verdict === 'changes-required' ? 'REQUEST_CHANGES' : 'COMMENT',
+      event: review.verdict === 'changes-required' ? 'REQUEST_CHANGES' : 'COMMENT',
       comments: lineComments,
     });
 
@@ -258,7 +215,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
         role: 'reviewer',
         event: 'review_posted',
         url: posted.url,
-        verdict,
+        verdict: review.verdict,
         eventPosted: posted.eventFinal,
         downgradedToComment: posted.downgradedToComment,
         inlineComments: lineComments.length,

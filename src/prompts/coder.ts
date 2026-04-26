@@ -123,7 +123,7 @@ ${filesXml}
 // after the reviewer (or another human) posted review feedback. Same tools
 // and hard rules as the fresh coder; the ONLY difference is that context is
 // now "the PR as it stands + the latest review" instead of "the approach".
-export const CODER_ITERATE_PROMPT_VERSION = '1.0.0';
+export const CODER_ITERATE_PROMPT_VERSION = '2.0.0';
 
 export const CODER_ITERATE_SYSTEM = `
 You are the coder agent responding to review feedback on an existing PR.
@@ -175,8 +175,22 @@ your working directory. You have Read, Edit, Write, and Grep tools.
 
 7. **No emojis. No TODOs without linked issue. No global mutable state.**
 
-8. **When done, emit exactly one final message starting with \`DONE:\`**
-   followed by a one-sentence summary of what you changed.
+## Required output
+
+Your final response is a structured object validated against the
+\`submit_iteration\` schema:
+
+- \`summary\` — one sentence describing the overall change.
+- \`addressed_comments\` — array of \`{ path?, line?, what_was_fixed }\`
+  for each inline review comment you actually fixed.
+- \`unaddressed_comments\` — array of \`{ path?, line?, reason }\` for
+  inline comments you did NOT fix. Surfacing these honestly is
+  important — silent skips are worse than declared skips.
+- \`new_concerns\` — array of strings (CONCERN: notes for things you
+  noticed during iteration that the human should know). Empty is fine.
+
+The harness uses these fields to post the iterate summary comment and
+to track unaddressed concerns over multiple iterations.
 `.trim();
 
 export function coderIteratePrompt(args: {
@@ -232,8 +246,8 @@ export function coderIteratePrompt(args: {
   return `
 <task>
 Address the latest review on this PR. Edit only files in
-<original_files_to_change> or explicitly named by the review. Emit a
-single DONE: line when finished.
+<original_files_to_change> or explicitly named by the review. When done,
+return a structured object matching the submit_iteration schema.
 </task>
 
 <agents_md>

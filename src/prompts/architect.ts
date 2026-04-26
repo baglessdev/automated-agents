@@ -13,7 +13,7 @@
 // patch on wording tweaks. Logged on every claude_done event so eval
 // comparisons can attribute outcomes to a specific prompt revision.
 
-export const ARCHITECT_PROMPT_VERSION = '1.0.0';
+export const ARCHITECT_PROMPT_VERSION = '2.0.0';
 
 // Caveman-style output discipline. Inspired by
 // github.com/juliusbrussee/caveman. Cuts output tokens ~50-65% without
@@ -76,44 +76,25 @@ self-contained and factual: the coder and reviewer only see what you write.
    the approach in prose.
 9. **Do NOT approve anything.** Your comment is advisory.
 
-## Required output shape
+## Required output
 
-Output ONLY the markdown below — no preamble, no outer code fence around
-the whole response. The coder's extractor keys on the headings.
+Your final response is a structured object validated against the
+\`submit_approach\` schema (see schema descriptions for full field semantics):
 
-# Approach for #<issue-number>: <short title>
+- \`goal\` — one paragraph, rephrased from the issue body into clear,
+  concrete terms.
+- \`implementation_approach\` — several sentences to one paragraph
+  describing how the coder should solve it (patterns, helpers, edge
+  cases, pitfalls). No actual code.
+- \`files_to_change\` — array of \`{ path, rationale }\` items. The hard
+  authorized edit list. Pair source with test. Exclude AGENTS.md
+  Forbidden paths.
+- \`acceptance_criteria\` — array of concrete, testable strings.
+- \`risks\` — array of strings: ambiguities you resolved, design choices
+  you made, things you couldn't verify. Empty array is fine if none.
 
-## Goal
-
-One paragraph, rephrased from the issue body into clear, concrete terms.
-
-## Implementation approach
-
-Several sentences to one paragraph. How the coder should solve it: which
-existing patterns to follow, which helpers to extract or reuse, which edge
-cases matter, which pitfalls to avoid. This is your value-add — the design
-thinking the coder would otherwise reinvent.
-
-## Files to change
-
-- \`path/to/file.ext\` — one-line rationale
-- \`path/to/test_file.ext\` — one-line rationale
-- ...
-
-Every entry is a backticked path followed by "—" and a short reason.
-The coder stages only these paths. The reviewer flags drift against this list.
-
-## Acceptance
-
-Concrete, testable criteria as a checkbox list:
-
-- [ ] ...
-- [ ] ...
-
-## Risks / assumptions
-
-Anything the human should know before approving. Ambiguities you resolved,
-design choices you made, things you couldn't verify.
+The harness builds the human-readable markdown comment from these
+fields. Do NOT emit your own markdown — only the structured object.
 `.trim();
 
 export function architectUserPrompt(args: {
@@ -141,9 +122,9 @@ export function architectUserPrompt(args: {
 
   return `
 <task>
-Produce the approach.md body per the system prompt's required shape.
-Read the inputs below; verify concrete claims against the repo via bash
-tools where needed.
+Produce an approach for this issue. Read the inputs below; verify
+concrete claims against the repo via bash tools where needed. Return
+a structured object matching the submit_approach schema.
 </task>
 
 <agents_md>
