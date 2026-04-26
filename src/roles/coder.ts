@@ -10,6 +10,8 @@ import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
 import { parseApproach } from '../lib/approach';
+import { fallbackTriage, routeRole } from '../lib/routing';
+import type { Triage } from '../prompts/schemas';
 import {
   configIdentity,
   checkoutNewBranch,
@@ -161,7 +163,20 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
       ? `${TERSE_DISCIPLINE}\n\n${CODER_SYSTEM}`
       : CODER_SYSTEM;
 
-    // 5. Run Claude — one-shot: just edit files, no verify loop.
+    // 5. Resolve routing from the approach's triage tier (B13). Fall
+    // back to the pre-B13 default (Sonnet, no thinking) when the
+    // approach lacks the tier — i.e. it was authored before B13 landed.
+    const triage: Triage =
+      parsed.triageComplexity && parsed.triageRisk
+        ? {
+            complexity: parsed.triageComplexity,
+            risk: parsed.triageRisk,
+            reasoning: '(read from embedded approach)',
+          }
+        : fallbackTriage();
+    const route = routeRole('coder', triage);
+
+    // 6. Run Claude — one-shot: just edit files, no verify loop.
     // Bash intentionally NOT in allowedTools — Claude shouldn't run tests
     // or iterate. CI on GitHub validates the diff after PR open.
     const result = await runClaude({
@@ -169,7 +184,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
-      model: config.coderModel,
+      model: route.model,
       maxTurns: 25,
     });
 
@@ -180,6 +195,9 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         role: 'coder',
         event: 'claude_done',
         promptVersion: CODER_PROMPT_VERSION,
+        triageComplexity: triage.complexity,
+        triageRisk: triage.risk,
+        routedModel: route.model,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

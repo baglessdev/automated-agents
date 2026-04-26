@@ -6,7 +6,9 @@
 // `parseApproach` (src/lib/approach.ts) — it is read back by coder-iterate
 // out of the embedded `<!-- agent-approach-embed -->` block in PR bodies.
 // In particular, the `## Files to change` heading and the
-// `- \`path\` — rationale` line shape are load-bearing.
+// `- \`path\` — rationale` line shape are load-bearing. Same for the
+// `## Triage` line — coder + reviewer + iterate read the triage tier
+// from there to drive their own model routing.
 
 import type { Approach, Iteration, Review } from './schemas';
 
@@ -24,6 +26,10 @@ export function renderApproachMarkdown(approach: Approach, issueNumber: number, 
     : '_None._';
 
   return `# Approach for #${issueNumber}: ${issueTitle}
+
+## Triage
+
+**Complexity:** ${approach.triage_complexity} · **Risk:** ${approach.triage_risk}
 
 ## Goal
 

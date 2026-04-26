@@ -12,6 +12,45 @@
 // validator burns retries on strict schemas in practice. Accepting extra
 // fields silently is cheaper than failing 5×.
 
+// Triage classification — produced by a cheap Haiku call before the
+// architect runs. Drives per-role model + thinking-budget routing for
+// the rest of the loop. Persisted in the architect's approach so coder,
+// reviewer, and coder-iterate can all read the same classification.
+export const TRIAGE_SCHEMA = {
+  type: 'object',
+  description:
+    'Quick classification of a GitHub issue\'s complexity and risk. Used by the harness to route each role to a model + thinking budget that fits the task. Be conservative: prefer "complex" over "standard" when in doubt; prefer "medium" risk over "low" when the change touches anything load-bearing.',
+  properties: {
+    complexity: {
+      type: 'string',
+      enum: ['trivial', 'standard', 'complex'],
+      description:
+        '"trivial" = single small function, no design choices, well-specified inputs (e.g., add a Clamp helper). "standard" = a feature or endpoint with some design decisions (e.g., add a request-ID middleware). "complex" = touches multiple subsystems, requires real architectural reasoning (e.g., a new auth flow, a schema migration).',
+    },
+    risk: {
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+      description:
+        '"low" = isolated change, easy to revert, no shared state. "medium" = touches request/response shape, public APIs, or commonly-used helpers. "high" = security-sensitive (auth, crypto, secrets), data migrations, breaking changes, or anything that could affect production users on rollout. High-risk issues are refused — they require human-authored PRs.',
+    },
+    reasoning: {
+      type: 'string',
+      description:
+        'One sentence explaining the classification. The harness logs this and surfaces it in the approach comment so humans can override if needed.',
+    },
+  },
+  required: ['complexity', 'risk', 'reasoning'],
+} as const;
+
+export type TriageComplexity = 'trivial' | 'standard' | 'complex';
+export type TriageRisk = 'low' | 'medium' | 'high';
+
+export interface Triage {
+  complexity: TriageComplexity;
+  risk: TriageRisk;
+  reasoning: string;
+}
+
 export const APPROACH_SCHEMA = {
   type: 'object',
   description:
@@ -59,8 +98,28 @@ export const APPROACH_SCHEMA = {
         'Anything the human should know before approving. Ambiguities you resolved, design choices you made, things you couldn\'t verify in the repo. Empty array is fine if there are no risks worth flagging.',
       items: { type: 'string' },
     },
+    triage_complexity: {
+      type: 'string',
+      enum: ['trivial', 'standard', 'complex'],
+      description:
+        'The complexity tier the harness classified this issue at before invoking the architect. Echo it back unchanged so downstream roles (coder, reviewer, iterate) read the same classification from your embedded approach.',
+    },
+    triage_risk: {
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+      description:
+        'Same — echo the risk tier back unchanged.',
+    },
   },
-  required: ['goal', 'implementation_approach', 'files_to_change', 'acceptance_criteria', 'risks'],
+  required: [
+    'goal',
+    'implementation_approach',
+    'files_to_change',
+    'acceptance_criteria',
+    'risks',
+    'triage_complexity',
+    'triage_risk',
+  ],
 } as const;
 
 export interface Approach {
@@ -69,6 +128,8 @@ export interface Approach {
   files_to_change: { path: string; rationale: string }[];
   acceptance_criteria: string[];
   risks: string[];
+  triage_complexity: TriageComplexity;
+  triage_risk: TriageRisk;
 }
 
 export const REVIEW_SCHEMA = {

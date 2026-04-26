@@ -4,6 +4,8 @@ import { getIssue, postIssueComment } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
+import { classifyIssue } from '../lib/triage';
+import { isHighRisk, refuseReason, routeRole } from '../lib/routing';
 import {
   ARCHITECT_PROMPT_VERSION,
   ARCHITECT_SYSTEM,
@@ -56,13 +58,59 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
   // 2. Clone target repo into a fresh workspace
   const ws = newWorkspace(repo);
   try {
-    // 3. Read conventions + file tree
+    // 3. Read conventions + symbol index
     const agentsMd = readOptional(join(ws.repoDir, 'AGENTS.md'));
     const designMd = readOptional(join(ws.repoDir, 'DESIGN.md'));
     const agentDirNotes = readAgentDir(ws.repoDir);
     const symbolIndex = buildSymbolIndex(ws.repoDir);
 
-    // 4. Compose prompt
+    // 4. Triage — classifies the issue's complexity + risk so we can
+    // route this and downstream roles to a model that fits the task.
+    // Cheap (Haiku, single call). Hard-failing here would block the
+    // entire pipeline so we'd rather try and fall back than skip.
+    const triage = await classifyIssue({
+      issueNumber: issue.number,
+      issueTitle: issue.title,
+      issueBody: issue.body,
+      agentsMd: agentsMd || '(AGENTS.md missing)',
+      symbolIndex,
+      cwd: ws.repoDir,
+    });
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        run: job.id,
+        role: 'architect',
+        event: 'triage_done',
+        complexity: triage.complexity,
+        risk: triage.risk,
+        reasoning: triage.reasoning,
+      }),
+    );
+
+    // 4a. High-risk → refuse. Post a comment explaining why and return
+    // before any further model spend.
+    if (isHighRisk(triage)) {
+      const runId = job.id.slice(0, 8);
+      const refuseBody =
+        `<!-- agent-approach run=${runId} refused=high-risk -->\n\n` +
+        `# Architect refused — high-risk issue\n\n` +
+        refuseReason(triage) +
+        `\n\n---\n_Posted by architect agent. Run: \`${runId}\`._`;
+      const commentUrl = await postIssueComment(repo, issueNumber, refuseBody);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          run: job.id,
+          role: 'architect',
+          event: 'refused_high_risk',
+          url: commentUrl,
+        }),
+      );
+      return;
+    }
+
+    // 5. Compose prompt
     const userPrompt = architectUserPrompt({
       issueNumber: issue.number,
       issueTitle: issue.title,
@@ -71,9 +119,14 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       designMd: designMd || '(DESIGN.md missing)',
       agentDirNotes,
       symbolIndex,
+      triageComplexity: triage.complexity,
+      triageRisk: triage.risk,
+      triageReasoning: triage.reasoning,
     });
 
-    // 5. Run Claude with Read/Grep/Bash tools, cwd pointed at the clone
+    // 6. Route + run Claude. Routing picks model + thinking budget per
+    // the triage tier; falls through to env-overridable defaults.
+    const route = routeRole('architect', triage);
     const systemPrompt = config.terseOutputs
       ? `${TERSE_DISCIPLINE}\n\n${ARCHITECT_SYSTEM}`
       : ARCHITECT_SYSTEM;
@@ -83,9 +136,9 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Grep', 'Bash'],
-      model: config.architectModel,
+      model: route.model,
       maxTurns: 30,
-      maxThinkingTokens: config.architectThinkingBudget || undefined,
+      maxThinkingTokens: route.thinkingBudget || undefined,
       outputFormat: { type: 'json_schema', schema: APPROACH_SCHEMA as Record<string, unknown> },
     });
 
@@ -96,6 +149,10 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
         role: 'architect',
         event: 'claude_done',
         promptVersion: ARCHITECT_PROMPT_VERSION,
+        triageComplexity: triage.complexity,
+        triageRisk: triage.risk,
+        routedModel: route.model,
+        routedThinkingBudget: route.thinkingBudget,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

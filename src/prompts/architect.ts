@@ -13,7 +13,7 @@
 // patch on wording tweaks. Logged on every claude_done event so eval
 // comparisons can attribute outcomes to a specific prompt revision.
 
-export const ARCHITECT_PROMPT_VERSION = '2.0.0';
+export const ARCHITECT_PROMPT_VERSION = '3.0.0';
 
 // Caveman-style output discipline. Inspired by
 // github.com/juliusbrussee/caveman. Cuts output tokens ~50-65% without
@@ -51,6 +51,7 @@ self-contained and factual: the coder and reviewer only see what you write.
 - \`<design_md>\` — architectural context + invariants.
 - \`<agent_dir_notes>\` — optional. Concatenated \`.agent/*.md\` content.
 - \`<symbol_index>\` — compact symbol index (path:line kind name) of the target repo main branch.
+- \`<triage>\` with \`<complexity>\` and \`<risk>\` — the harness's classification of this issue. Echo these values back unchanged in your structured output's \`triage_complexity\` and \`triage_risk\` fields so downstream roles read the same classification.
 
 ## Hard rules
 
@@ -92,6 +93,8 @@ Your final response is a structured object validated against the
 - \`acceptance_criteria\` — array of concrete, testable strings.
 - \`risks\` — array of strings: ambiguities you resolved, design choices
   you made, things you couldn't verify. Empty array is fine if none.
+- \`triage_complexity\` — echo from the input \`<triage>/<complexity>\`.
+- \`triage_risk\` — echo from the input \`<triage>/<risk>\`.
 
 The harness builds the human-readable markdown comment from these
 fields. Do NOT emit your own markdown — only the structured object.
@@ -105,6 +108,9 @@ export function architectUserPrompt(args: {
   designMd: string;
   agentDirNotes: string; // concatenation of .agent/*.md, or "" if none
   symbolIndex: string;
+  triageComplexity: string;
+  triageRisk: string;
+  triageReasoning: string;
 }): string {
   const {
     issueNumber,
@@ -114,6 +120,9 @@ export function architectUserPrompt(args: {
     designMd,
     agentDirNotes,
     symbolIndex,
+    triageComplexity,
+    triageRisk,
+    triageReasoning,
   } = args;
 
   const agentDirSection = agentDirNotes.trim()
@@ -124,7 +133,8 @@ export function architectUserPrompt(args: {
 <task>
 Produce an approach for this issue. Read the inputs below; verify
 concrete claims against the repo via bash tools where needed. Return
-a structured object matching the submit_approach schema.
+a structured object matching the submit_approach schema. Echo the
+triage tier (\`triage_complexity\`, \`triage_risk\`) unchanged.
 </task>
 
 <agents_md>
@@ -138,6 +148,12 @@ ${agentDirSection}
 <symbol_index>
 ${symbolIndex}
 </symbol_index>
+
+<triage>
+<complexity>${triageComplexity}</complexity>
+<risk>${triageRisk}</risk>
+<reasoning>${triageReasoning}</reasoning>
+</triage>
 
 <issue>
 <number>${issueNumber}</number>

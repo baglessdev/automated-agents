@@ -18,8 +18,10 @@ import {
   reviewerUserPrompt,
 } from '../prompts/reviewer';
 import { TERSE_DISCIPLINE } from '../prompts/architect';
-import { REVIEW_SCHEMA, type Review } from '../prompts/schemas';
+import { REVIEW_SCHEMA, type Review, type Triage } from '../prompts/schemas';
 import { renderReviewMarkdown } from '../prompts/render';
+import { parseApproach } from '../lib/approach';
+import { fallbackTriage, routeRole } from '../lib/routing';
 import { config } from '../config';
 import type { Job, ReviewerPayload } from '../types';
 
@@ -112,14 +114,27 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       ? `${TERSE_DISCIPLINE}\n\n${REVIEWER_SYSTEM}`
       : REVIEWER_SYSTEM;
 
+    // Read triage from the embedded approach (Mode A) or fall back to
+    // the pre-B13 default (Sonnet+thinking) for human PRs / legacy bot PRs.
+    const parsedApproach = approachBody ? parseApproach(approachBody) : { triageComplexity: undefined, triageRisk: undefined };
+    const triage: Triage =
+      parsedApproach.triageComplexity && parsedApproach.triageRisk
+        ? {
+            complexity: parsedApproach.triageComplexity,
+            risk: parsedApproach.triageRisk,
+            reasoning: '(read from embedded approach)',
+          }
+        : fallbackTriage();
+    const route = routeRole('reviewer', triage);
+
     const result = await runClaude({
       systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Grep'],
-      model: config.reviewerModel,
+      model: route.model,
       maxTurns: 20,
-      maxThinkingTokens: config.reviewerThinkingBudget || undefined,
+      maxThinkingTokens: route.thinkingBudget || undefined,
       outputFormat: { type: 'json_schema', schema: REVIEW_SCHEMA as Record<string, unknown> },
     });
 
@@ -130,6 +145,10 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
         role: 'reviewer',
         event: 'claude_done',
         promptVersion: REVIEWER_PROMPT_VERSION,
+        triageComplexity: triage.complexity,
+        triageRisk: triage.risk,
+        routedModel: route.model,
+        routedThinkingBudget: route.thinkingBudget,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,

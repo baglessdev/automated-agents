@@ -27,6 +27,8 @@ import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
 import { parseApproach } from '../lib/approach';
+import { fallbackTriage, routeRole } from '../lib/routing';
+import type { Triage } from '../prompts/schemas';
 import {
   configIdentity,
   stageTargets,
@@ -202,12 +204,24 @@ export async function runCoderIterate(
       ? `${TERSE_DISCIPLINE}\n\n${CODER_ITERATE_SYSTEM}`
       : CODER_ITERATE_SYSTEM;
 
+    // Route based on triage tier from the embedded approach. Falls back
+    // to pre-B13 default (Sonnet) when iterating on PRs from before B13.
+    const triage: Triage =
+      parsed.triageComplexity && parsed.triageRisk
+        ? {
+            complexity: parsed.triageComplexity,
+            risk: parsed.triageRisk,
+            reasoning: '(read from embedded approach)',
+          }
+        : fallbackTriage();
+    const route = routeRole('coder', triage);
+
     const result = await runClaude({
       systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
-      model: config.coderModel,
+      model: route.model,
       maxTurns: 25,
       outputFormat: { type: 'json_schema', schema: ITERATION_SCHEMA as Record<string, unknown> },
     });
@@ -221,6 +235,9 @@ export async function runCoderIterate(
         role: 'coder_iterate',
         event: 'claude_done',
         promptVersion: CODER_ITERATE_PROMPT_VERSION,
+        triageComplexity: triage.complexity,
+        triageRisk: triage.risk,
+        routedModel: route.model,
         addressedCount: iteration.addressed_comments.length,
         unaddressedCount: iteration.unaddressed_comments.length,
         newConcernsCount: iteration.new_concerns.length,
