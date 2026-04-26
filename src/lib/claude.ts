@@ -64,6 +64,20 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   }> = [];
   const pendingStructuredCalls = new Map<string, string>();
 
+  // Workaround: when given a structured-output schema directly, the model
+  // (observed on Claude Sonnet 4.5) consistently wraps its tool_use input
+  // as `{ "parameter": <actual_object> }`. The SDK's Ajv validator then
+  // rejects every retry because the schema expects the fields at root,
+  // not under `parameter`. Wrap the schema so the validator agrees with
+  // the model, then unwrap the result.structured below before returning.
+  const wrappedSchema = opts.outputFormat
+    ? {
+        type: 'object',
+        properties: { parameter: opts.outputFormat.schema },
+        required: ['parameter'],
+      }
+    : undefined;
+
   const stream = query({
     prompt: opts.userPrompt,
     options: {
@@ -77,7 +91,9 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
         stderrLines.push(data);
       },
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
-      ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
+      ...(wrappedSchema
+        ? { outputFormat: { type: 'json_schema' as const, schema: wrappedSchema } }
+        : {}),
     },
   });
 
@@ -173,7 +189,13 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
         throw new Error(`claude returned error result (${m.subtype}): ${detail}`);
       }
       if (typeof m.result === 'string') finalText = m.result;
-      if (m.structured_output !== undefined) structured = m.structured_output;
+      // Unwrap the `parameter` envelope (see wrappedSchema comment above).
+      if (m.structured_output !== undefined) {
+        const so = m.structured_output as { parameter?: unknown };
+        structured = so && typeof so === 'object' && 'parameter' in so
+          ? so.parameter
+          : m.structured_output;
+      }
       if (m.usage?.input_tokens) tokensIn = m.usage.input_tokens;
       if (m.usage?.output_tokens) tokensOut = m.usage.output_tokens;
       if (typeof m.usage?.cache_read_input_tokens === 'number') {
