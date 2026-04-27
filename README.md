@@ -24,7 +24,7 @@ For flow diagrams and per-component detail, see
 Hard caps:
 - `ITERATE_MAX` — default 3 (counted via `agent-iterate:` commit trailer).
 - `maxTurns` per Claude session — 20–25 depending on role.
-- One-job-at-a-time worker; SQLite-backed queue.
+- One-job-at-a-time worker; SQS FIFO-backed queue with DLQ.
 
 Every role spawns a **fresh** Claude subprocess — no `--resume`, no shared
 conversation state. See the "Session isolation" section of `agentic-flow.md`.
@@ -66,13 +66,15 @@ be deleted.
 GitHub webhooks
       │
       ▼
- Express /webhook  ──► HMAC verify ──► enqueue job
+ Express /webhook  ──► HMAC verify ──► SendMessage (FIFO, dedup on
+                                          │           x-github-delivery)
+                                          ▼
+                                SQS FIFO queue (+ DLQ)
                                           │
                                           ▼
-                                SQLite queue (better-sqlite3)
-                                          │
-                                          ▼
-                                 Worker loop (one job at a time)
+                                 Worker loop (one job at a time,
+                                              long-poll receive,
+                                              heartbeat-extend visibility)
                                           │
                        ┌──────────────────┼──────────────────┐
                        ▼                  ▼                  ▼
@@ -94,6 +96,7 @@ Required `.env` (loaded from `/etc/automated-agents.env` under systemd):
 GITHUB_WEBHOOK_SECRET=<hex secret>
 GITHUB_TOKEN=<PAT with repo scope on the target>
 ANTHROPIC_API_KEY=<key>
+SQS_QUEUE_URL=<FIFO queue URL — Pulumi outputs `queueUrl`>
 ```
 
 Optional (sensible defaults exist):
@@ -102,9 +105,12 @@ Optional (sensible defaults exist):
 |---|---|---|
 | `PORT` | `8080` | Webhook listener |
 | `WORKSPACE_ROOT` | `/var/work/automated-agents` | Temp clones per run |
-| `QUEUE_PATH` | `/var/lib/automated-agents/queue.db` | SQLite queue file |
+| `AWS_REGION` | `us-east-1` | Region the SQS queue lives in |
+| `SQS_VISIBILITY_TIMEOUT` | `900` | Initial visibility timeout (s); worker heartbeat extends it for jobs that run longer |
+| `SQS_WAIT_TIME` | `20` | Long-poll receive wait (s) |
+| `SQS_HEARTBEAT_INTERVAL_MS` | `300000` | How often worker calls `ChangeMessageVisibility` for the in-flight job |
+| `SQS_ENDPOINT` | _(unset)_ | Override for local dev (`http://localhost:9324` for ElasticMQ) |
 | `ARCH_LABEL` | `agent:arch` | Label that fires architect |
-| `POLL_INTERVAL_MS` | `2000` | Worker idle poll |
 | `ARCHITECT_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` so extended thinking + structured output engage |
 | `CODER_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` — Haiku underperforms on multi-file tasks |
 | `REVIEWER_MODEL` | `claude-haiku-4-5` | EC2 overrides to `claude-sonnet-4-5` — same reasoning as architect |
@@ -119,13 +125,29 @@ Optional (sensible defaults exist):
 
 ## Local dev
 
+The worker needs a FIFO queue. For local dev we run
+[ElasticMQ](https://github.com/softwaremill/elasticmq) in Docker (no AWS
+credentials needed):
+
 ```bash
+docker compose up -d                       # ElasticMQ on :9324, queues created from elasticmq.conf
 npm install
 npm run build
 GITHUB_WEBHOOK_SECRET=test \
 GITHUB_TOKEN=ghp_xxx \
 ANTHROPIC_API_KEY=sk-ant-xxx \
+SQS_ENDPOINT=http://localhost:9324 \
+SQS_QUEUE_URL=http://localhost:9324/000000000000/automated-agents-dev.fifo \
+AWS_REGION=us-east-1 \
+AWS_ACCESS_KEY_ID=x AWS_SECRET_ACCESS_KEY=x \
   npm start
+```
+
+The FIFO queue and DLQ are pre-declared in `elasticmq.conf` and created
+by ElasticMQ at boot. Verify with:
+
+```bash
+curl -s "http://localhost:9324/?Action=ListQueues"
 ```
 
 Use `ngrok http 8080` or similar to expose `/webhook` to GitHub for
@@ -197,7 +219,8 @@ src/
 ├── webhook.ts              HMAC-SHA256 verification
 │
 ├── queue/
-│   └── sqlite.ts           Job queue (better-sqlite3, WAL)
+│   ├── queue.ts            Queue interface (async)
+│   └── sqs.ts              SQS FIFO impl (@aws-sdk/client-sqs)
 │
 ├── lib/
 │   ├── claude.ts           runClaude() — one SDK query per call
@@ -231,7 +254,9 @@ infra/
   "can't REQUEST_CHANGES on your own PR" limitation — reviewer auto-downgrades
   to COMMENT and preserves the verdict in the body. Proper fix is a GitHub
   App or separate bot accounts per role.
-- **No retries on transient failures.** A failed job stays failed.
+- **No retries on logic failures.** `markFailed` deletes the SQS message
+  immediately. Crashes (visibility-timeout expiry) get exactly one
+  redelivery via the DLQ's `maxReceiveCount=2` redrive policy.
 - **All three roles run on Sonnet 4.5** in the live deployment (env-overridden
   from the Haiku defaults). Required for extended thinking + structured
   output. Cost-per-full-loop went from ~$0.17 (Haiku-mostly era) to

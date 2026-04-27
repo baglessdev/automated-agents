@@ -1,9 +1,10 @@
-import type { Job, JobKind } from '../types';
+import type { Job, JobKind, JobPayload } from '../types';
 
 export interface Queue {
-  enqueue(kind: JobKind, payload: Job['payload']): Job;
-  claimNext(): Job | null;
-  markDone(id: string): void;
-  markFailed(id: string, error: string): void;
-  close(): void;
+  enqueue(kind: JobKind, payload: JobPayload, dedupKey?: string): Promise<Job>;
+  claimNext(): Promise<Job | null>;
+  markDone(id: string): Promise<void>;
+  markFailed(id: string, error: string): Promise<void>;
+  heartbeat(id: string, extendSeconds: number): Promise<void>;
+  close(): Promise<void>;
 }

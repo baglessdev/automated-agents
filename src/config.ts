@@ -27,14 +27,39 @@ export const config = {
   // Where session workspaces live. One subdir per run, cleaned after.
   workspaceRoot: optional('WORKSPACE_ROOT', '/var/work/automated-agents'),
 
-  // Where the SQLite queue + state lives.
-  queuePath: optional('QUEUE_PATH', '/var/lib/automated-agents/queue.db'),
+  // SQS FIFO queue for jobs. Required. The Pulumi stack injects this
+  // into /etc/automated-agents.env. Local dev points at ElasticMQ.
+  sqsQueueUrl: must('SQS_QUEUE_URL'),
+
+  // AWS region the queue lives in. Picked up by the SDK if unset, but
+  // we default explicitly so the worker fails fast on misconfiguration
+  // instead of silently signing requests for the wrong region.
+  awsRegion: optional('AWS_REGION', 'us-east-1'),
+
+  // SQS message visibility timeout. Roles run minutes; if the worker
+  // crashes mid-job the message reappears after this window. Heartbeat
+  // (below) extends it while the job is genuinely in flight.
+  sqsVisibilityTimeoutSeconds: Number(
+    optional('SQS_VISIBILITY_TIMEOUT', '900'),
+  ),
+
+  // Long-polling wait. Replaces the old setTimeout poll loop.
+  sqsWaitTimeSeconds: Number(optional('SQS_WAIT_TIME', '20')),
+
+  // How often the worker calls ChangeMessageVisibility for the in-flight
+  // job. Must be < sqsVisibilityTimeoutSeconds so we always extend
+  // before the message becomes visible to other receivers.
+  sqsHeartbeatIntervalMs: Number(
+    optional('SQS_HEARTBEAT_INTERVAL_MS', '300000'),
+  ),
+
+  // Optional endpoint override for local dev (ElasticMQ at
+  // http://localhost:9324). Unset on EC2 so the SDK uses the real
+  // SQS service for the configured region.
+  sqsEndpoint: process.env.SQS_ENDPOINT || undefined,
 
   // Label on the target repo that triggers the architect.
   archLabel: optional('ARCH_LABEL', 'agent:arch'),
-
-  // How often the worker polls the queue when idle (ms).
-  pollIntervalMs: Number(optional('POLL_INTERVAL_MS', '2000')),
 
   // Per-role model overrides. Defaults to haiku-4-5 for POC cost.
   // Override at runtime with ARCHITECT_MODEL, CODER_MODEL, REVIEWER_MODEL.

@@ -1,8 +1,8 @@
-// Background worker. Polls the SQLite queue; dispatches jobs to role
+// Background worker. Long-polls the SQS queue; dispatches jobs to role
 // handlers. One job at a time in a single process — simple and sufficient
 // for POC throughput.
 
-import { SqliteQueue } from './queue/sqlite';
+import { SqsQueue } from './queue/sqs';
 import { runArchitect } from './roles/architect';
 import { runCoder } from './roles/coder';
 import { runCoderIterate } from './roles/coder-iterate';
@@ -16,7 +16,13 @@ import type {
   ReviewerPayload,
 } from './types';
 
-const queue = new SqliteQueue(config.queuePath);
+const queue = new SqsQueue({
+  queueUrl: config.sqsQueueUrl,
+  region: config.awsRegion,
+  visibilityTimeoutSec: config.sqsVisibilityTimeoutSeconds,
+  waitTimeSec: config.sqsWaitTimeSeconds,
+  endpoint: config.sqsEndpoint,
+});
 
 async function runOne(job: Job): Promise<void> {
   console.log(
@@ -27,6 +33,15 @@ async function runOne(job: Job): Promise<void> {
       kind: job.kind,
     }),
   );
+  // Heartbeat: extend the SQS visibility timeout while the job runs so
+  // the message doesn't redeliver under us mid-flight. Cleared in finally.
+  const hb = setInterval(() => {
+    queue.heartbeat(job.id, config.sqsVisibilityTimeoutSeconds).catch(() => {
+      // Heartbeat errors are non-fatal; if the receipt handle has expired
+      // the visibility timeout itself will let SQS redeliver, which is
+      // the recovery path we want.
+    });
+  }, config.sqsHeartbeatIntervalMs);
   try {
     switch (job.kind) {
       case 'architect':
@@ -46,48 +61,68 @@ async function runOne(job: Job): Promise<void> {
         throw new Error(`unknown job kind: ${_exhaust}`);
       }
     }
-    queue.markDone(job.id);
+    await queue.markDone(job.id);
     console.log(JSON.stringify({ level: 'info', run: job.id, event: 'done' }));
   } catch (err) {
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
-    queue.markFailed(job.id, msg);
+    await queue.markFailed(job.id, msg);
     console.error(
       JSON.stringify({ level: 'error', run: job.id, event: 'failed', error: msg }),
     );
+  } finally {
+    clearInterval(hb);
   }
 }
 
 export function startWorker(): void {
   let stopped = false;
+  let inFlight: Promise<void> | null = null;
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
-    const job = queue.claimNext();
+    const job = await queue.claimNext();
     if (job) {
-      await runOne(job);
-      setImmediate(tick);
-    } else {
-      setTimeout(tick, config.pollIntervalMs);
+      inFlight = runOne(job).finally(() => {
+        inFlight = null;
+      });
+      await inFlight;
     }
+    setImmediate(tick);
   };
 
   setImmediate(tick);
 
-  process.on('SIGTERM', () => {
+  const onSignal = async (): Promise<void> => {
     stopped = true;
-    queue.close();
-  });
-  process.on('SIGINT', () => {
-    stopped = true;
-    queue.close();
-  });
+    if (inFlight) {
+      // Wait for the in-flight job, capped at 60s so a wedged job
+      // can't block deploys indefinitely. Combined with SQS's
+      // visibility-timeout redelivery, a wedged job that exceeds the
+      // cap will be reclaimed by the next worker.
+      try {
+        await Promise.race([
+          inFlight,
+          new Promise((resolve) => setTimeout(resolve, 60_000)),
+        ]);
+      } catch {
+        // ignore; runOne already logs failures
+      }
+    }
+    await queue.close();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
 
   console.log(
     JSON.stringify({
       level: 'info',
       event: 'worker_started',
-      queuePath: config.queuePath,
-      pollIntervalMs: config.pollIntervalMs,
+      queueUrl: config.sqsQueueUrl,
+      region: config.awsRegion,
+      visibilityTimeoutSec: config.sqsVisibilityTimeoutSeconds,
+      waitTimeSec: config.sqsWaitTimeSeconds,
     }),
   );
 }
