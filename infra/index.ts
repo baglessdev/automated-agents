@@ -95,16 +95,64 @@ new aws.iam.RolePolicyAttachment(`${baseName}-${stack}-ssm-attach`, {
   policyArn: 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore',
 });
 
+// --- SQS FIFO queue + DLQ -----------------------------------------------
+// FIFO so MessageDeduplicationId (= x-github-delivery) gives us a 5-min
+// idempotency window covering GitHub's webhook retry behavior.
+// Visibility timeout is the worker's grace window if it crashes mid-job;
+// the worker also extends it via heartbeat for jobs that run longer.
+const dlq = new aws.sqs.Queue(`${baseName}-${stack}-dlq`, {
+  name: `${baseName}-${stack}-dlq.fifo`,
+  fifoQueue: true,
+  messageRetentionSeconds: 1209600, // 14 days
+  tags: { Stack: stack },
+});
+
+const jobQueue = new aws.sqs.Queue(`${baseName}-${stack}-queue`, {
+  name: `${baseName}-${stack}.fifo`,
+  fifoQueue: true,
+  contentBasedDeduplication: false, // MessageDeduplicationId is set explicitly
+  visibilityTimeoutSeconds: 900,
+  messageRetentionSeconds: 345600, // 4 days
+  receiveWaitTimeSeconds: 20,
+  redrivePolicy: dlq.arn.apply((arn) =>
+    JSON.stringify({ deadLetterTargetArn: arn, maxReceiveCount: 2 }),
+  ),
+  tags: { Stack: stack },
+});
+
+new aws.iam.RolePolicy(`${baseName}-${stack}-sqs-policy`, {
+  role: role.id,
+  policy: jobQueue.arn.apply((arn) =>
+    JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Action: [
+            'sqs:SendMessage',
+            'sqs:ReceiveMessage',
+            'sqs:DeleteMessage',
+            'sqs:ChangeMessageVisibility',
+            'sqs:GetQueueAttributes',
+          ],
+          Resource: arn,
+        },
+      ],
+    }),
+  ),
+});
+
 const instanceProfile = new aws.iam.InstanceProfile(
   `${baseName}-${stack}-profile`,
   { role: role.name, tags: { Stack: stack } },
 );
 
 // --- Cloud-init user-data: install Node/Caddy, clone, build, run --------
+const awsRegion = aws.config.requireRegion();
 const userData = pulumi
-  .all([anthropicApiKey, githubWebhookSecret, githubToken])
+  .all([anthropicApiKey, githubWebhookSecret, githubToken, jobQueue.url])
   .apply(
-    ([ak, ws, gt]) => `#!/bin/bash
+    ([ak, ws, gt, qUrl]) => `#!/bin/bash
 set -euo pipefail
 exec > /var/log/cloud-init-user.log 2>&1
 
@@ -177,6 +225,8 @@ PORT=8080
 ANTHROPIC_API_KEY=${ak}
 GITHUB_WEBHOOK_SECRET=${ws}
 GITHUB_TOKEN=${gt}
+SQS_QUEUE_URL=${qUrl}
+AWS_REGION=${awsRegion}
 ENV
 chown agent:agent /etc/automated-agents.env
 
@@ -276,3 +326,5 @@ export const hostname = eip.publicIp.apply(
 );
 export const webhookUrl = hostname.apply((h) => `https://${h}/webhook`);
 export const healthUrl = hostname.apply((h) => `https://${h}/health`);
+export const queueUrl = jobQueue.url;
+export const dlqUrl = dlq.url;
