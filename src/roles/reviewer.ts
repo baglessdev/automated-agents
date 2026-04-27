@@ -12,6 +12,7 @@ import {
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
+import { buildCanUseTool } from '../lib/permissions';
 import {
   REVIEWER_PROMPT_VERSION,
   REVIEWER_SYSTEM,
@@ -132,6 +133,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Grep'],
+      canUseTool: buildCanUseTool('reviewer', job.id),
       model: route.model,
       maxTurns: 20,
       maxThinkingTokens: route.thinkingBudget || undefined,

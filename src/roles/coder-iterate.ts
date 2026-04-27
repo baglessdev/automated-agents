@@ -26,6 +26,7 @@ import {
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
+import { buildCanUseTool } from '../lib/permissions';
 import { parseApproach } from '../lib/approach';
 import { fallbackTriage, routeRole } from '../lib/routing';
 import type { Triage } from '../prompts/schemas';
@@ -221,6 +222,7 @@ export async function runCoderIterate(
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
+      canUseTool: buildCanUseTool('coder_iterate', job.id),
       model: route.model,
       maxTurns: 25,
       outputFormat: { type: 'json_schema', schema: ITERATION_SCHEMA as Record<string, unknown> },

@@ -1,4 +1,4 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 
 export interface ClaudeRunOptions {
   systemPrompt: string;
@@ -22,6 +22,12 @@ export interface ClaudeRunOptions {
   // outputFormat. Used by triage so Haiku doesn't waste turns
   // exploring the workspace.
   disableBuiltinTools?: boolean;
+  // Permission hook. Called for every tool-use the model attempts that
+  // is NOT in `allowedTools`. The function decides allow/deny and may
+  // attach a message that gets fed back to the model on deny. Replaces
+  // the old `permissionMode: 'bypassPermissions'` behavior with explicit
+  // policy. See src/lib/permissions.ts for the role-aware factory.
+  canUseTool?: CanUseTool;
 }
 
 export interface ClaudeRunResult {
@@ -80,8 +86,12 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       allowedTools: opts.allowedTools ?? ['Read', 'Grep', 'Bash'],
       model: opts.model ?? 'claude-haiku-4-5',
       maxTurns: opts.maxTurns ?? 20,
-      permissionMode: 'bypassPermissions',
+      // No `permissionMode: 'bypassPermissions'` — gating now flows
+      // through canUseTool when present, otherwise the SDK's default
+      // mode applies. Roles always pass canUseTool; runs that don't
+      // (e.g. triage with disableBuiltinTools) have no tools to gate.
       ...(opts.disableBuiltinTools ? { tools: [] as string[] } : {}),
+      ...(opts.canUseTool ? { canUseTool: opts.canUseTool } : {}),
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
       ...(wrappedSchema
         ? { outputFormat: { type: 'json_schema' as const, schema: wrappedSchema } }

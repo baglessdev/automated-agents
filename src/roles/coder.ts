@@ -9,6 +9,7 @@ import {
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
+import { buildCanUseTool } from '../lib/permissions';
 import { parseApproach } from '../lib/approach';
 import { fallbackTriage, routeRole } from '../lib/routing';
 import type { Triage } from '../prompts/schemas';
@@ -184,6 +185,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
+      canUseTool: buildCanUseTool('coder', job.id),
       model: route.model,
       maxTurns: 25,
     });

@@ -4,6 +4,7 @@ import { getIssue, postIssueComment } from '../lib/github';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
+import { buildCanUseTool } from '../lib/permissions';
 import { classifyIssue } from '../lib/triage';
 import { isHighRisk, refuseReason, routeRole } from '../lib/routing';
 import {
@@ -136,6 +137,7 @@ export async function runArchitect(job: Job & { payload: ArchitectPayload }): Pr
       userPrompt,
       cwd: ws.repoDir,
       allowedTools: ['Read', 'Grep', 'Bash'],
+      canUseTool: buildCanUseTool('architect', job.id),
       model: route.model,
       maxTurns: 30,
       maxThinkingTokens: route.thinkingBudget || undefined,
