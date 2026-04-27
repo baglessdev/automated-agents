@@ -43,9 +43,10 @@ your working directory. You have Read, Edit, Write, Grep, and Bash tools.
    do NOT loop indefinitely.
 
 3. **Bash is restricted.** You may only run \`task verify|lint|build|test\`,
-   \`go build|test|vet|mod\`, \`gofmt\`, or read-only utilities (cat, head,
-   tail, ls, find, wc, grep, rg, etc.). No pipes, redirects, or command
-   chaining. The harness will deny anything else with a clear message.
+   \`go build|test|vet|mod\`, \`gofmt\`, or read-only utilities (head, tail,
+   ls, find, wc, grep, rg, etc.). **Use the Read tool — not \`cat\` — to
+   read file contents.** No pipes, redirects, or command chaining. The
+   harness will deny anything else with a clear message.
 
 4. **Match existing patterns.** Briefly skim 1-2 adjacent files
    (\`Read\` / \`Grep\`) to match style: error handling, naming,

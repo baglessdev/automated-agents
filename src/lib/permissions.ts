@@ -56,7 +56,13 @@ function isAllowedBashCommand(command: string): boolean {
   if (/^gofmt(\s|$)/.test(trimmed)) return true;
 
   // Read-only POSIX utilities for repo inspection.
-  if (/^(cat|head|tail|ls|find|wc|which|pwd|stat|file|tree|grep|rg|du)(\s|$)/.test(trimmed)) {
+  //
+  // `cat` is intentionally excluded: the coder has the Read tool for file
+  // contents (it does line-count caps + binary detection). A 69MB binary
+  // catted into the SDK's stdout pipe SIGABRTed Claude Code in production —
+  // dropping `cat` removes the foot-gun without taking anything the model
+  // actually needs.
+  if (/^(head|tail|ls|find|wc|which|pwd|stat|file|tree|grep|rg|du)(\s|$)/.test(trimmed)) {
     return true;
   }
 
@@ -93,8 +99,9 @@ export function buildCanUseTool(role: AgentRole, runId: string): CanUseTool {
         message:
           `Bash command not permitted: '${command.slice(0, 80)}'. ` +
           `Allowed: 'task verify|lint|build|test', 'go build|test|vet|mod', ` +
-          `'gofmt', or read-only utilities (cat, head, tail, ls, find, wc, ` +
-          `grep, rg, etc.). No pipes, redirects, or command chaining.`,
+          `'gofmt', or read-only utilities (head, tail, ls, find, wc, ` +
+          `grep, rg, etc.). Use the Read tool — not 'cat' — to read file ` +
+          `contents. No pipes, redirects, or command chaining.`,
       };
     }
 
