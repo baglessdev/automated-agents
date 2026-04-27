@@ -256,8 +256,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/work/automated-agents /var/lib/automated-agents
+# read-only (not true) so the agent user can read its own ~/.config/git
+# and ~/.config/claude. /var/work + /var/lib remain writable below.
+ProtectHome=read-only
+ReadWritePaths=/var/work/automated-agents /var/lib/automated-agents /home/agent/.cache /home/agent/.local /home/agent/.config
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
