@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  addLabels,
   getIssue,
   listIssueComments,
   openPullRequest,
@@ -12,7 +13,7 @@ import { buildSymbolIndex } from '../lib/symbol-index';
 import { buildCanUseTool } from '../lib/permissions';
 import { parseApproach } from '../lib/approach';
 import { fallbackTriage, routeRole } from '../lib/routing';
-import type { Triage } from '../prompts/schemas';
+import { CODER_SCHEMA, type Coder, type Triage } from '../prompts/schemas';
 import {
   configIdentity,
   checkoutNewBranch,
@@ -177,18 +178,27 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         : fallbackTriage();
     const route = routeRole('coder', triage);
 
-    // 6. Run Claude — one-shot: just edit files, no verify loop.
-    // Bash intentionally NOT in allowedTools — Claude shouldn't run tests
-    // or iterate. CI on GitHub validates the diff after PR open.
+    // 6. Run Claude. The coder edits files AND runs the repo's verify
+    // command in-session (Bash gated to verify-only commands via
+    // canUseTool). One retry permitted; structured output reports the
+    // verify outcome to the harness.
     const result = await runClaude({
       systemPrompt,
       userPrompt,
       cwd: ws.repoDir,
+      // Bash is intentionally NOT in allowedTools — every Bash call goes
+      // through canUseTool where the command-level allowlist gates it
+      // (see src/lib/permissions.ts). Read/Edit/Write/Grep auto-allow.
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
       canUseTool: buildCanUseTool('coder', job.id),
       model: route.model,
-      maxTurns: 25,
+      // Raised from 25 to 40 to accommodate edit → verify → fix → re-verify
+      // within a single session.
+      maxTurns: 40,
+      outputFormat: { type: 'json_schema', schema: CODER_SCHEMA as Record<string, unknown> },
     });
+
+    const coderResult = result.structured as Coder;
 
     console.log(
       JSON.stringify({
@@ -200,6 +210,9 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         triageComplexity: triage.complexity,
         triageRisk: triage.risk,
         routedModel: route.model,
+        verifyAttempted: coderResult.verify_attempted,
+        verifyPassed: coderResult.verify_passed,
+        concernsCount: coderResult.concerns.length,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         cacheRead: result.cacheReadTokens,
@@ -261,22 +274,77 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
     // 9. Push
     push(ws.repoDir, branch, repo, config.githubToken);
 
-    // 10. Open PR with embedded approach so reviewer can find it
+    // 10. Build the verify status section + machine-readable embed.
+    // Reviewer parses the embed (analogous to <!-- agent-approach-embed -->)
+    // to know whether to weight verify failures in its review.
+    const verifyHeading = !coderResult.verify_attempted
+      ? '⚠ Not attempted'
+      : coderResult.verify_passed
+        ? '✓ Passed'
+        : '✗ Failed';
+
+    const verifyBlock =
+      `### Verify status\n\n${verifyHeading}\n\n` +
+      (coderResult.verify_attempted && !coderResult.verify_passed && coderResult.verify_output_tail
+        ? `<details><summary>Verify output (last 30 lines)</summary>\n\n\`\`\`\n${coderResult.verify_output_tail}\n\`\`\`\n\n</details>\n\n`
+        : '') +
+      (coderResult.concerns.length > 0
+        ? `### Concerns\n\n${coderResult.concerns.map((c) => `- ${c}`).join('\n')}\n\n`
+        : '');
+
+    const verifyEmbed =
+      `<!-- agent-verify-status -->\n` +
+      JSON.stringify({
+        attempted: coderResult.verify_attempted,
+        passed: coderResult.verify_passed,
+        output_tail: coderResult.verify_output_tail.slice(0, 5000),
+      }) +
+      `\n<!-- /agent-verify-status -->`;
+
+    // 11. Open PR with embedded approach so reviewer can find it
+    const titlePrefix =
+      coderResult.verify_attempted && !coderResult.verify_passed ? '[verify-failed] ' : '';
     const prBody =
       `Closes #${issueNumber}\n\n` +
       `Run: \`${runId}\` · Session: \`${result.sessionId ?? '-'}\`\n` +
-      `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · Turns: ${result.turns ?? '?'}\n\n` +
+      `Tokens: ${result.tokensIn ?? '?'} in / ${result.tokensOut ?? '?'} out · ` +
+      `Cost: $${result.costUsd?.toFixed(4) ?? '?'} · Turns: ${result.turns ?? '?'}\n\n` +
+      verifyBlock +
       `### Diff stat\n\n\`\`\`\n${diff}\n\`\`\`\n\n` +
       `### Approach (embedded for reviewer)\n\n` +
-      `<!-- agent-approach-embed -->\n${parsed.approachBody}\n<!-- /agent-approach-embed -->\n`;
+      `<!-- agent-approach-embed -->\n${parsed.approachBody}\n<!-- /agent-approach-embed -->\n\n` +
+      verifyEmbed;
 
     const prUrl = await openPullRequest({
       repoFull: repo,
       head: branch,
       base: 'main',
-      title: `agent: ${issue.title}`,
+      title: `${titlePrefix}agent: ${issue.title}`,
       body: prBody,
     });
+
+    // 12. If verify didn't pass (or wasn't attempted), label the PR so
+    // humans + reviewer agent both see the status at a glance. PR number
+    // is parsed from the URL (octokit doesn't return it from create).
+    const verifyOk = coderResult.verify_attempted && coderResult.verify_passed;
+    if (!verifyOk) {
+      const prNumber = Number(prUrl.split('/').pop());
+      if (Number.isFinite(prNumber)) {
+        try {
+          await addLabels(repo, prNumber, ['agent:verify-failed']);
+        } catch (err) {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              run: job.id,
+              event: 'label_add_failed',
+              prNumber,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
+      }
+    }
 
     console.log(
       JSON.stringify({
@@ -286,6 +354,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         event: 'pr_opened',
         url: prUrl,
         sha,
+        verifyOk,
       }),
     );
   } finally {

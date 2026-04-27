@@ -55,6 +55,33 @@ function extractEmbeddedApproach(prBody: string): string {
   return m ? m[1].trim() : '';
 }
 
+interface VerifyStatus {
+  attempted: boolean;
+  passed: boolean;
+  output_tail: string;
+}
+
+// Pull the coder's verify status out of the PR body. Coder writes a
+// machine-readable JSON block between <!-- agent-verify-status --> markers.
+// Returns null when the PR predates A5 (no embed), so the reviewer can
+// distinguish "verify didn't run" from "verify wasn't a thing yet".
+function extractVerifyStatus(prBody: string): VerifyStatus | null {
+  const m = prBody.match(
+    /<!--\s*agent-verify-status\s*-->\s*\n([\s\S]*?)\n\s*<!--\s*\/agent-verify-status\s*-->/,
+  );
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1].trim()) as Partial<VerifyStatus>;
+    return {
+      attempted: Boolean(parsed.attempted),
+      passed: Boolean(parsed.passed),
+      output_tail: typeof parsed.output_tail === 'string' ? parsed.output_tail : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function runReviewer(job: Job & { payload: ReviewerPayload }): Promise<void> {
   const { repo, prNumber } = job.payload;
   const runId = job.id.slice(0, 8);
@@ -98,6 +125,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
     const agentsMd = readOptional(join(ws.repoDir, 'AGENTS.md')) || '(AGENTS.md missing)';
     const designMd = readOptional(join(ws.repoDir, 'DESIGN.md')) || '(DESIGN.md missing)';
     const symbolIndex = buildSymbolIndex(ws.repoDir);
+    const verifyStatus = extractVerifyStatus(pull.body);
 
     const userPrompt = reviewerUserPrompt({
       prNumber,
@@ -109,6 +137,7 @@ export async function runReviewer(job: Job & { payload: ReviewerPayload }): Prom
       agentsMd,
       designMd,
       symbolIndex,
+      verifyStatus,
     });
 
     const systemPrompt = config.terseOutputs

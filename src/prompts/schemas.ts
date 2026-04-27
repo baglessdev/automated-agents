@@ -132,6 +132,66 @@ export interface Approach {
   triage_risk: TriageRisk;
 }
 
+// Coder structured output (B/A4). Lets the harness know whether the
+// coder actually ran the repo's `verify` command in-session and what
+// the result was, so failed-verify PRs can be labeled honestly and the
+// reviewer can adjust its review.
+export const CODER_SCHEMA = {
+  type: 'object',
+  description:
+    'Coder\'s structured report after editing files. Tells the harness whether the changes pass the repo\'s declared verify command, so the PR can open with an honest verify status (verified-green or agent:verify-failed) for the human and the reviewer to act on.',
+  properties: {
+    summary: {
+      type: 'string',
+      description: 'One short sentence describing the change you made.',
+    },
+    files_modified: {
+      type: 'array',
+      description:
+        'Paths you edited or created. Self-reported; the harness cross-checks against actual git staging and surfaces any drift.',
+      items: { type: 'string' },
+    },
+    verify_attempted: {
+      type: 'boolean',
+      description:
+        'True if you ran `task verify` (or the repo\'s declared verify command) at any point in this session. Always set this honestly — the harness uses it to distinguish "I forgot to verify" from "I ran verify and it failed".',
+    },
+    verify_passed: {
+      type: 'boolean',
+      description:
+        'True only if your most recent verify run exited successfully. False if it failed or if you never ran verify. Do not set this true unless you actually saw a clean exit.',
+    },
+    verify_output_tail: {
+      type: 'string',
+      description:
+        'When verify_passed is false, paste the last ~30 lines / 5KB of verify output so the human and the reviewer can see what failed. Empty string when verify passed or was not attempted.',
+    },
+    concerns: {
+      type: 'array',
+      description:
+        'Free-form CONCERN: notes — things you noticed while implementing that the human should know about (architecture mismatch with the approach, surprising existing code, etc.). Empty array is fine.',
+      items: { type: 'string' },
+    },
+  },
+  required: [
+    'summary',
+    'files_modified',
+    'verify_attempted',
+    'verify_passed',
+    'verify_output_tail',
+    'concerns',
+  ],
+} as const;
+
+export interface Coder {
+  summary: string;
+  files_modified: string[];
+  verify_attempted: boolean;
+  verify_passed: boolean;
+  verify_output_tail: string;
+  concerns: string[];
+}
+
 export const REVIEW_SCHEMA = {
   type: 'object',
   description:

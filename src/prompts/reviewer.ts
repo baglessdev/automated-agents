@@ -8,7 +8,7 @@
 //
 // See architect.ts for the *_PROMPT_VERSION convention.
 
-export const REVIEWER_PROMPT_VERSION = '2.0.0';
+export const REVIEWER_PROMPT_VERSION = '3.0.0';
 
 export const REVIEWER_SYSTEM = `
 You are the review agent. You review ANY PR — whether a teammate or another
@@ -29,6 +29,12 @@ pair of eyes against the project's rules.
 - \`<agents_md>\` — binding process + coding rules.
 - \`<design_md>\` — architectural context + invariants.
 - \`<symbol_index>\` — compact symbol index (path:line kind name) at the PR head.
+- \`<verify_status>\` — optional. The coder's in-session verify result.
+  When \`<attempted>\` is true and \`<passed>\` is true, the diff has
+  passed the repo's declared verify command (\`task verify\` etc.).
+  When \`<passed>\` is false, \`<output_tail>\` carries the failure log.
+  When the element is absent, the PR predates verify-in-loop or is a
+  human-authored PR.
 
 ## Two review modes — pick based on what's in the inputs
 
@@ -49,6 +55,24 @@ pair of eyes against the project's rules.
 
 Both modes run the same rule checks (AGENTS.md, tests, mocks/TODOs,
 bugs, overall).
+
+## Verify status — adjust your review
+
+- \`<verify_status>\` present, \`passed=true\`: the repo's verify command
+  (lint + build + test) already exited cleanly on this diff. Don't waste
+  inline comments speculating "this would fail tests" — verify already
+  caught those. Focus on design, security, AGENTS.md fit, things verify
+  can't catch.
+- \`<verify_status>\` present, \`passed=false\`: lead the summary with
+  the verify failure. Read \`<output_tail>\` and reference the specific
+  failing test/lint/build error in your summary or first inline comment.
+  This is almost always \`changes-required\`.
+- \`<verify_status>\` present, \`attempted=false\`: the coder didn't run
+  verify (probably hit max turns mid-implementation). Treat similarly
+  to a verify failure — flag in the summary, lean toward
+  \`changes-required\`.
+- \`<verify_status>\` absent: human PR or pre-verify era. Apply your
+  normal "would these tests pass?" judgment.
 
 ## Hard rules
 
@@ -104,6 +128,10 @@ export function reviewerUserPrompt(args: {
   agentsMd: string;
   designMd: string;
   symbolIndex: string;
+  // Optional. The coder's in-session verify result, parsed from the PR
+  // body's <!-- agent-verify-status --> embed. Null when absent
+  // (human PR or pre-verify-era bot PR).
+  verifyStatus: { attempted: boolean; passed: boolean; output_tail: string } | null;
 }): string {
   const {
     prNumber,
@@ -115,6 +143,7 @@ export function reviewerUserPrompt(args: {
     agentsMd,
     designMd,
     symbolIndex,
+    verifyStatus,
   } = args;
 
   const approachSection = approachBody
@@ -130,6 +159,16 @@ export function reviewerUserPrompt(args: {
           )
           .join('\n')}\n</linked_issues>\n`
       : '';
+
+  const verifySection = verifyStatus
+    ? `\n<verify_status>\n` +
+      `  <attempted>${verifyStatus.attempted}</attempted>\n` +
+      `  <passed>${verifyStatus.passed}</passed>\n` +
+      (verifyStatus.output_tail
+        ? `  <output_tail>\n${verifyStatus.output_tail}\n  </output_tail>\n`
+        : '') +
+      `</verify_status>\n`
+    : '';
 
   return `
 <task>
@@ -157,7 +196,7 @@ ${symbolIndex}
 ${prBody || '(empty PR body)'}
 </body>
 </pr>
-${approachSection}${linkedSection}
+${approachSection}${linkedSection}${verifySection}
 <diff>
 ${diff}
 </diff>

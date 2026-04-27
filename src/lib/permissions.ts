@@ -24,6 +24,45 @@ const GLOBALLY_DENIED = new Set([
   'WebSearch',
 ]);
 
+// Roles that are permitted to invoke Bash, gated by isAllowedBashCommand.
+// Architect already has Bash in its allowedTools (auto-allowed) so it
+// does not flow through this hook. Coder + coder_iterate get Bash via
+// canUseTool (PR 3, A3) so the harness can check each invocation's
+// command argument against the verify-only allowlist.
+const ROLES_WITH_BASH = new Set<AgentRole>(['coder', 'coder_iterate']);
+
+// Allowlist of Bash command prefixes the coder may run. Anything that
+// chains commands, redirects, or substitutes is denied — keep this
+// strict; it's easier to widen than to narrow once the model has
+// learned habits around what works.
+//
+// The set is small on purpose: declared verify subcommands plus Go
+// build/test tooling plus a handful of read-only POSIX utilities for
+// inspecting state. No write operations beyond Edit/Write tools.
+function isAllowedBashCommand(command: string): boolean {
+  const trimmed = command.trim();
+
+  // Reject any shell metacharacter that could chain commands, redirect,
+  // or substitute. Single/double quotes are OK (needed for arg quoting).
+  if (/[|&;`$<>(){}]/.test(trimmed)) return false;
+
+  // task <verify|lint|build|test> [args...]
+  if (/^task\s+(verify|lint|build|test)(\s|$)/.test(trimmed)) return true;
+
+  // go <build|test|vet|mod|version> [args...]
+  if (/^go\s+(build|test|vet|mod|version)(\s|$)/.test(trimmed)) return true;
+
+  // gofmt [args...]
+  if (/^gofmt(\s|$)/.test(trimmed)) return true;
+
+  // Read-only POSIX utilities for repo inspection.
+  if (/^(cat|head|tail|ls|find|wc|which|pwd|stat|file|tree|grep|rg|du)(\s|$)/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function buildCanUseTool(role: AgentRole, runId: string): CanUseTool {
   return async (toolName, input) => {
     // The synthetic StructuredOutput tool is added by the SDK when
@@ -38,6 +77,24 @@ export function buildCanUseTool(role: AgentRole, runId: string): CanUseTool {
       return {
         behavior: 'deny',
         message: `Tool '${toolName}' is not enabled for this pipeline.`,
+      };
+    }
+
+    // Bash for coder + coder_iterate — gate by command prefix.
+    if (toolName === 'Bash' && ROLES_WITH_BASH.has(role)) {
+      const command = typeof input.command === 'string' ? input.command : '';
+      if (isAllowedBashCommand(command)) {
+        logDecision(runId, role, toolName, 'allow', `bash command: ${command.slice(0, 60)}`);
+        return { behavior: 'allow', updatedInput: input };
+      }
+      logDecision(runId, role, toolName, 'deny', `bash command not on allowlist: ${command.slice(0, 60)}`);
+      return {
+        behavior: 'deny',
+        message:
+          `Bash command not permitted: '${command.slice(0, 80)}'. ` +
+          `Allowed: 'task verify|lint|build|test', 'go build|test|vet|mod', ` +
+          `'gofmt', or read-only utilities (cat, head, tail, ls, find, wc, ` +
+          `grep, rg, etc.). No pipes, redirects, or command chaining.`,
       };
     }
 

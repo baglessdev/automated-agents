@@ -85,6 +85,24 @@ export async function postIssueComment(
   return data.html_url;
 }
 
+// Add labels to an issue or PR. GitHub's addLabels endpoint creates
+// missing labels on the fly with default styling, so we don't need a
+// separate "ensure label exists" call. Used by the coder role to mark
+// PRs that didn't pass verify with `agent:verify-failed`.
+export async function addLabels(
+  repoFull: string,
+  number: number,
+  labels: string[],
+): Promise<void> {
+  const { owner, repo } = parseRepo(repoFull);
+  await octokit.issues.addLabels({
+    owner,
+    repo,
+    issue_number: number,
+    labels,
+  });
+}
+
 export async function openPullRequest(args: {
   repoFull: string;
   head: string;
