@@ -1,4 +1,9 @@
-import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type CanUseTool,
+  type HookCallbackMatcher,
+  type HookEvent,
+} from '@anthropic-ai/claude-agent-sdk';
 
 export interface ClaudeRunOptions {
   systemPrompt: string;
@@ -28,6 +33,10 @@ export interface ClaudeRunOptions {
   // the old `permissionMode: 'bypassPermissions'` behavior with explicit
   // policy. See src/lib/permissions.ts for the role-aware factory.
   canUseTool?: CanUseTool;
+  // Lifecycle hooks. Used by the coder role to run `task verify` as a
+  // Stop hook (ground truth, independent of what the model claims in
+  // its structured output). See src/roles/coder.ts.
+  hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 }
 
 export interface ClaudeRunResult {
@@ -92,6 +101,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
       // (e.g. triage with disableBuiltinTools) have no tools to gate.
       ...(opts.disableBuiltinTools ? { tools: [] as string[] } : {}),
       ...(opts.canUseTool ? { canUseTool: opts.canUseTool } : {}),
+      ...(opts.hooks ? { hooks: opts.hooks } : {}),
       ...(opts.maxThinkingTokens ? { maxThinkingTokens: opts.maxThinkingTokens } : {}),
       ...(wrappedSchema
         ? { outputFormat: { type: 'json_schema' as const, schema: wrappedSchema } }

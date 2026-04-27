@@ -77,6 +77,11 @@ self-contained and factual: the coder and reviewer only see what you write.
    the approach in prose.
 9. **Do NOT approve anything.** Your comment is advisory.
 
+10. **Parallel tool calls.** For maximum efficiency, whenever you
+    perform multiple independent operations (multiple Read, Grep,
+    Bash one-liners), invoke all relevant tools simultaneously in a
+    single response rather than sequentially across turns.
+
 ## Required output
 
 Your final response is a structured object validated against the

@@ -7,12 +7,14 @@ import {
   openPullRequest,
   postIssueComment,
 } from '../lib/github';
+import type { HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 import { newWorkspace } from '../lib/workspace';
 import { runClaude } from '../lib/claude';
 import { buildSymbolIndex } from '../lib/symbol-index';
 import { buildCanUseTool } from '../lib/permissions';
 import { parseApproach } from '../lib/approach';
 import { fallbackTriage, routeRole } from '../lib/routing';
+import { runVerify, type VerifyResult } from '../lib/verify';
 import { CODER_SCHEMA, type Coder, type Triage } from '../prompts/schemas';
 import {
   configIdentity,
@@ -180,8 +182,60 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
 
     // 6. Run Claude. The coder edits files AND runs the repo's verify
     // command in-session (Bash gated to verify-only commands via
-    // canUseTool). One retry permitted; structured output reports the
-    // verify outcome to the harness.
+    // canUseTool). The Stop hook runs verify one more time at session
+    // end as authoritative ground truth — the model's claimed
+    // verify_passed is overridden by verifyState.result below.
+    // Wrapping object — TS doesn't narrow object properties through
+    // closure assignments the way it does plain variables, so this lets
+    // us read `verifyState.result` after the session ends without TS
+    // thinking it's still null.
+    const verifyState: { result: VerifyResult | null } = { result: null };
+
+    const stopHook: HookCallbackMatcher = {
+      hooks: [
+        async (input) => {
+          if (input.hook_event_name !== 'Stop') return { continue: true };
+
+          // Already retried via stop_hook_active=true: just let the model
+          // finalize. Otherwise on first stop, run verify and surface
+          // failures so the model can fix.
+          const verify = await runVerify(ws.repoDir);
+          verifyState.result = verify;
+
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              run: job.id,
+              role: 'coder',
+              event: 'verify_hook',
+              passed: verify.passed,
+              exitCode: verify.exitCode,
+              durationMs: verify.durationMs,
+              stopHookActive: input.stop_hook_active,
+            }),
+          );
+
+          if (verify.passed) return { continue: true };
+
+          if (input.stop_hook_active) {
+            // We already gave the model one chance. Let it finalize even
+            // though verify is failing; the harness will label the PR
+            // agent:verify-failed.
+            return { continue: true };
+          }
+
+          return {
+            decision: 'block',
+            reason:
+              `\`task verify\` failed (exit ${verify.exitCode}). ` +
+              `Fix the issues below and complete your structured output:\n\n` +
+              `\`\`\`\n${verify.output}\n\`\`\``,
+          };
+        },
+      ],
+      timeout: 360, // generous: verify itself caps at 5min
+    };
+
     const result = await runClaude({
       systemPrompt,
       userPrompt,
@@ -191,6 +245,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
       // (see src/lib/permissions.ts). Read/Edit/Write/Grep auto-allow.
       allowedTools: ['Read', 'Edit', 'Write', 'Grep'],
       canUseTool: buildCanUseTool('coder', job.id),
+      hooks: { Stop: [stopHook] },
       model: route.model,
       // Raised from 25 to 40 to accommodate edit → verify → fix → re-verify
       // within a single session.
@@ -199,6 +254,36 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
     });
 
     const coderResult = result.structured as Coder;
+
+    // Authoritative override: harness-run verify is ground truth. Log
+    // when the model's claim disagrees — that's a tell of either
+    // mid-session fixes (model passed, hook re-ran on a still-changing
+    // tree) or model hallucination (model claimed pass on broken code).
+    const finalVerifyPassed = verifyState.result
+      ? verifyState.result.passed
+      : coderResult.verify_passed;
+    const finalVerifyAttempted = verifyState.result
+      ? true
+      : coderResult.verify_attempted;
+    const finalVerifyOutput = verifyState.result
+      ? verifyState.result.output
+      : coderResult.verify_output_tail;
+
+    if (
+      verifyState.result &&
+      coderResult.verify_passed !== verifyState.result.passed
+    ) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          run: job.id,
+          role: 'coder',
+          event: 'verify_claim_mismatch',
+          modelClaimed: coderResult.verify_passed,
+          actualResult: verifyState.result.passed,
+        }),
+      );
+    }
 
     console.log(
       JSON.stringify({
@@ -211,7 +296,10 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
         triageRisk: triage.risk,
         routedModel: route.model,
         verifyAttempted: coderResult.verify_attempted,
-        verifyPassed: coderResult.verify_passed,
+        verifyPassedClaimed: coderResult.verify_passed,
+        verifyPassedActual: verifyState.result ? verifyState.result.passed : null,
+        verifyExitCode: verifyState.result ? verifyState.result.exitCode : null,
+        verifyDurationMs: verifyState.result ? verifyState.result.durationMs : null,
         concernsCount: coderResult.concerns.length,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
@@ -275,18 +363,20 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
     push(ws.repoDir, branch, repo, config.githubToken);
 
     // 10. Build the verify status section + machine-readable embed.
-    // Reviewer parses the embed (analogous to <!-- agent-approach-embed -->)
-    // to know whether to weight verify failures in its review.
-    const verifyHeading = !coderResult.verify_attempted
+    // Uses the harness-run hook result as ground truth (overrides what
+    // the model claimed). Reviewer parses the embed (analogous to
+    // <!-- agent-approach-embed -->) to know whether to weight verify
+    // failures in its review.
+    const verifyHeading = !finalVerifyAttempted
       ? '⚠ Not attempted'
-      : coderResult.verify_passed
-        ? '✓ Passed'
-        : '✗ Failed';
+      : finalVerifyPassed
+        ? '✓ Passed (harness-verified)'
+        : '✗ Failed (harness-verified)';
 
     const verifyBlock =
       `### Verify status\n\n${verifyHeading}\n\n` +
-      (coderResult.verify_attempted && !coderResult.verify_passed && coderResult.verify_output_tail
-        ? `<details><summary>Verify output (last 30 lines)</summary>\n\n\`\`\`\n${coderResult.verify_output_tail}\n\`\`\`\n\n</details>\n\n`
+      (finalVerifyAttempted && !finalVerifyPassed && finalVerifyOutput
+        ? `<details><summary>Verify output (last 5KB)</summary>\n\n\`\`\`\n${finalVerifyOutput}\n\`\`\`\n\n</details>\n\n`
         : '') +
       (coderResult.concerns.length > 0
         ? `### Concerns\n\n${coderResult.concerns.map((c) => `- ${c}`).join('\n')}\n\n`
@@ -295,15 +385,15 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
     const verifyEmbed =
       `<!-- agent-verify-status -->\n` +
       JSON.stringify({
-        attempted: coderResult.verify_attempted,
-        passed: coderResult.verify_passed,
-        output_tail: coderResult.verify_output_tail.slice(0, 5000),
+        attempted: finalVerifyAttempted,
+        passed: finalVerifyPassed,
+        output_tail: finalVerifyOutput.slice(0, 5000),
       }) +
       `\n<!-- /agent-verify-status -->`;
 
     // 11. Open PR with embedded approach so reviewer can find it
     const titlePrefix =
-      coderResult.verify_attempted && !coderResult.verify_passed ? '[verify-failed] ' : '';
+      finalVerifyAttempted && !finalVerifyPassed ? '[verify-failed] ' : '';
     const prBody =
       `Closes #${issueNumber}\n\n` +
       `Run: \`${runId}\` · Session: \`${result.sessionId ?? '-'}\`\n` +
@@ -326,7 +416,7 @@ export async function runCoder(job: Job & { payload: CoderPayload }): Promise<vo
     // 12. If verify didn't pass (or wasn't attempted), label the PR so
     // humans + reviewer agent both see the status at a glance. PR number
     // is parsed from the URL (octokit doesn't return it from create).
-    const verifyOk = coderResult.verify_attempted && coderResult.verify_passed;
+    const verifyOk = finalVerifyAttempted && finalVerifyPassed;
     if (!verifyOk) {
       const prNumber = Number(prUrl.split('/').pop());
       if (Number.isFinite(prNumber)) {

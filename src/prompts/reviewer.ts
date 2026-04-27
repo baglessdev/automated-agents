@@ -91,6 +91,11 @@ bugs, overall).
 
 5. **≤5 inline comments** per review. Prefer highest-signal.
 
+6. **Parallel tool calls.** For maximum efficiency, whenever you
+   need to inspect multiple files or run multiple greps, invoke all
+   relevant tools simultaneously in one response rather than
+   sequentially across turns.
+
 ## Required output
 
 Your final response is a structured object validated against the

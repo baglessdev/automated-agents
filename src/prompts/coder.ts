@@ -61,6 +61,11 @@ your working directory. You have Read, Edit, Write, Grep, and Bash tools.
 
 8. **No emojis. No TODOs without linked issue. No global mutable state.**
 
+9. **Parallel tool calls.** For maximum efficiency, whenever you
+    perform multiple independent operations (Read several files,
+    Grep multiple patterns), invoke all relevant tools simultaneously
+    in one response rather than sequentially across turns.
+
 ## Required output
 
 Your final response is a structured object validated against the
@@ -201,6 +206,11 @@ your working directory. You have Read, Edit, Write, and Grep tools.
    \`CONCERN:\` note and do the minimum safe thing.
 
 7. **No emojis. No TODOs without linked issue. No global mutable state.**
+
+8. **Parallel tool calls.** For maximum efficiency, whenever you
+    perform multiple independent operations, invoke all relevant
+    tools simultaneously in one response rather than sequentially
+    across turns.
 
 ## Required output
 
