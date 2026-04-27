@@ -248,6 +248,32 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
+# Hardening (E1). Reduces blast radius if a Claude session attempts
+# something out-of-scope. Each role's workspace lives under
+# /var/work/automated-agents (writable); everything else is read-only or
+# private to the unit.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/work/automated-agents /var/lib/automated-agents
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+MemoryMax=4G
+CPUQuota=200%
+TimeoutStopSec=70
+
 [Install]
 WantedBy=multi-user.target
 UNIT
