@@ -256,10 +256,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
-# read-only (not true) so the agent user can read its own ~/.config/git
-# and ~/.config/claude. /var/work + /var/lib remain writable below.
+# read-only (not true) so /root and /run/user stay masked but the
+# agent user keeps its own home. claude-agent-sdk writes a lot under
+# ~/.claude (statsig, todos, projects, shell-snapshots) and into
+# ~/.claude.json — so /home/agent must be in ReadWritePaths.
 ProtectHome=read-only
-ReadWritePaths=/var/work/automated-agents /var/lib/automated-agents /home/agent/.cache /home/agent/.local /home/agent/.config
+ReadWritePaths=/var/work/automated-agents /var/lib/automated-agents /home/agent
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
